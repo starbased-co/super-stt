@@ -147,12 +147,26 @@ impl Default for UdpAuth {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    // Ensure tests run sequentially to avoid race conditions with environment variables
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_secret_generation_and_verification() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        use std::time::{SystemTime, UNIX_EPOCH};
+
         // Set a unique temporary directory for this test
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let test_id = std::process::id();
-        let temp_dir = env::temp_dir().join(format!("super_stt_test_{test_id}"));
+        let temp_dir = env::temp_dir().join(format!("super_stt_test_{timestamp}_{test_id}"));
+
+        // Store original value to restore later
+        let original_runtime_dir = env::var("XDG_RUNTIME_DIR").ok();
         unsafe {
             env::set_var("XDG_RUNTIME_DIR", &temp_dir);
         }
@@ -182,5 +196,13 @@ mod tests {
 
         // Cleanup
         auth.cleanup().unwrap();
+
+        // Restore original environment variable
+        unsafe {
+            match original_runtime_dir {
+                Some(original) => env::set_var("XDG_RUNTIME_DIR", original),
+                None => env::remove_var("XDG_RUNTIME_DIR"),
+            }
+        }
     }
 }
