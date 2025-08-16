@@ -23,18 +23,18 @@
 git clone https://github.com/jorge-menjivar/super-stt.git
 cd super-stt
 
-# (Required) The Daemon and CLI tool
+# The Desktop application to manage settings and models
+just install-app
+
+# (Optional) COSMIC Desktop applet to show visualizations
+just install-applet
+
+# The Daemon and CLI tool
 just install-daemon
 # (Suggestion) If you have an NVIDIA GPU with CUDA installed, build with CUDA acceleration instead to load models onto the GPU
 # just install-daemon --cuda
 # (Suggestion) If you have an NVIDIA GPU with CUDA and cuDNN installed, build with cuDNN acceleration instead for better performance
 # just install-daemon --cudnn
-
-# (Recommended) The Desktop application to manage settings and models
-just install-app
-
-# (Optional) COSMIC Desktop applet to show visualizations
-just install-applet
 ```
 
 ## ⌨️ Shortcuts
