@@ -1,0 +1,11 @@
+**/target
+**/venv
+**/dist
+**/build
+**/__pycache__
+**/*.env
+**/*.log
+*.mp3
+*.wav
+*.flac
+*.ogg
