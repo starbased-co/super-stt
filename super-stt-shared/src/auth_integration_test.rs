@@ -3,18 +3,34 @@
 mod integration_tests {
     use crate::auth::UdpAuth;
     use std::env;
+    use std::sync::Mutex;
+
+    // Ensure tests run sequentially to avoid race conditions with environment variables
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_client_daemon_auth_flow() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        use std::time::{SystemTime, UNIX_EPOCH};
+
         // Set up a unique temporary directory for testing
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let test_id = std::thread::current().id();
-        let temp_dir = env::temp_dir().join(format!("super_stt_auth_test_{test_id:?}"));
+        let temp_dir = env::temp_dir().join(format!("super_stt_auth_test_{timestamp}_{test_id:?}"));
+
+        // Store original value to restore later
+        let original_runtime_dir = env::var("XDG_RUNTIME_DIR").ok();
         unsafe {
             env::set_var("XDG_RUNTIME_DIR", &temp_dir);
         }
 
         // Simulate daemon starting and creating auth
         let daemon_auth = UdpAuth::new().unwrap();
+        // Ensure daemon creates the secret first
+        let _daemon_secret = daemon_auth.get_or_create_secret().unwrap();
 
         // Simulate client (applet) connecting
         let client_auth = UdpAuth::new().unwrap();
@@ -39,25 +55,36 @@ mod integration_tests {
 
         // Verify cleanup worked
         assert!(!temp_dir.join("super-stt").join("udp_secret").exists());
+
+        // Restore original environment variable
+        unsafe {
+            match original_runtime_dir {
+                Some(original) => env::set_var("XDG_RUNTIME_DIR", original),
+                None => env::remove_var("XDG_RUNTIME_DIR"),
+            }
+        }
     }
 
     #[test]
     fn test_auth_persistence() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        // Set up a unique temporary directory for testing with timestamp
+        // Set up a unique temporary directory for testing with timestamp and thread ID
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let temp_dir = env::temp_dir().join(format!("super_stt_persistence_test_{timestamp}"));
+        let thread_id = std::thread::current().id();
+        let temp_dir = env::temp_dir().join(format!(
+            "super_stt_persistence_test_{timestamp}_{thread_id:?}"
+        ));
+
+        // Store original value to restore later
+        let original_runtime_dir = env::var("XDG_RUNTIME_DIR").ok();
         unsafe {
             env::set_var("XDG_RUNTIME_DIR", &temp_dir);
         }
-
-        // Clean up any existing secret first
-        let cleanup_auth = UdpAuth::new().unwrap();
-        let _ = cleanup_auth.cleanup();
 
         // Create auth and generate secret
         let auth1 = UdpAuth::new().unwrap();
@@ -79,5 +106,13 @@ mod integration_tests {
 
         // Cleanup
         auth1.cleanup().unwrap();
+
+        // Restore original environment variable
+        unsafe {
+            match original_runtime_dir {
+                Some(original) => env::set_var("XDG_RUNTIME_DIR", original),
+                None => env::remove_var("XDG_RUNTIME_DIR"),
+            }
+        }
     }
 }
