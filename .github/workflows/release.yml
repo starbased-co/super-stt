@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Build Linux Binaries
+    strategy:
+      matrix:
+        include:
+          # x86_64 builds
+          - target: x86_64-unknown-linux-gnu
+            features: ""
+            suffix: cpu
+            runner: ubuntu-latest
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda
+            runner: ubuntu-latest
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn
+            runner: ubuntu-latest
+
+          # aarch64 builds
+          - target: aarch64-unknown-linux-gnu
+            features: ""
+            suffix: cpu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn
+            runner: ubuntu-latest
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libxkbcommon-x11-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libglib2.0-dev \
+            libgtk-4-dev \
+            libspeechd-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxss-dev \
+            libasound2-dev \
+            pkg-config
+
+      - name: Install cross-compilation tools for aarch64
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install CUDA (if needed)
+        if: contains(matrix.features, 'cuda')
+        uses: Jimver/cuda-toolkit@7263c89f6aa4f1c5247a0947b8e9f8eedfce66a5
+        with:
+          cuda: "12.4.0"
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build daemon binary
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo build --release --target ${{ matrix.target }} --bin super-stt
+          else
+            cargo build --release --target ${{ matrix.target }} --bin super-stt --features "${{ matrix.features }}"
+          fi
+
+      - name: Build app binary
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin super-stt-app
+
+      - name: Build applet binary
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin super-stt-cosmic-applet
+
+      - name: Create tarball
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/super-stt dist/
+          cp target/${{ matrix.target }}/release/super-stt-app dist/
+          cp target/${{ matrix.target }}/release/super-stt-cosmic-applet dist/
+
+          # Include systemd service files
+          mkdir -p dist/systemd
+          if [ -f super-stt/systemd/super-stt.service ]; then
+            cp super-stt/systemd/super-stt.service dist/systemd/
+          fi
+
+          # Create tarball with architecture and feature suffix
+          tar -czf super-stt-${{ matrix.target }}-${{ matrix.suffix }}.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: super-stt-${{ matrix.target }}-${{ matrix.suffix }}
+          path: super-stt-${{ matrix.target }}-${{ matrix.suffix }}.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: build-linux
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
