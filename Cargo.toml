@@ -24,7 +24,6 @@
     candle-flash-attn   = { git = "https://github.com/huggingface/candle.git", branch = "main" }
 
     # HuggingFace Hub and tokenizers (for daemon)
-    hf-hub     = { version = "0.4.3", features = ["tokio"] }
     tokenizers = "0.21.4"
     tekken-rs  = "0.1.1"
 
@@ -45,7 +44,12 @@
     uuid = { version = "1.18.0", features = ["v4"] }
     clap = { version = "4.5.43", features = ["derive", "cargo"] }
     clap_complete = "4.5.56"
-    reqwest = { version = "0.12.22", features = ["json", "multipart"] }
+    reqwest = { version = "0.12.22", features = [
+      "json",
+      "multipart",
+      "rustls-tls",
+      "stream",
+    ], default-features = false }
     strum = { version = "0.27.2", features = ["derive"] }
     strum_macros = "0.27"
 

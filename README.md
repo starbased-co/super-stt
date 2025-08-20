@@ -37,6 +37,29 @@ just install-daemon
 # just install-daemon --cudnn
 ```
 
+## Prerequisites
+
+### Debian/Ubuntu/Pop!_OS
+You may need to install the following dependencies:
+
+```sudo apt install build-essential libxkbcommon-dev libasound2-dev pkg-config libssl-dev```
+
+**If you find any missing make a pull request to update this list. Thanks!**
+
+### Fedora
+You may need to install the following dependencies:
+
+```sudo dnf install gcc gcc-c++ libxkbcommon-devel alsa-lib-devel pkgconf perl-FindBin perl-IPC-Cmd openssl-devel```
+
+**If you find any missing make a pull request to update this list. Thanks!**
+
+### Arch
+You may need to install the following dependencies:
+
+```sudo pacman -S pkgconf openssl```
+
+**If you find any missing make a pull request to update this list. Thanks!**
+
 ## ⌨️ Shortcuts
 Add a shortcut that executes the following command to your desktop environment to start the app.
 ```sh
