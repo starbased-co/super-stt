@@ -48,7 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Install system dependencies (for x86_64 native builds)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -67,27 +68,16 @@ jobs:
             libxi-dev \
             libxss-dev \
             libasound2-dev \
-            pkg-config
-
-      - name: Install cross-compilation tools for aarch64
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+            pkg-config \
+            libssl-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install CUDA (if needed)
-        if: contains(matrix.features, 'cuda')
+      - name: Install CUDA (if needed for native builds)
+        if: contains(matrix.features, 'cuda') && matrix.target == 'x86_64-unknown-linux-gnu'
         uses: Jimver/cuda-toolkit@7263c89f6aa4f1c5247a0947b8e9f8eedfce66a5
         with:
           cuda: "12.4.0"
@@ -101,21 +91,43 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install cross (for cross-compilation)
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Build daemon binary
         run: |
-          if [ -z "${{ matrix.features }}" ]; then
-            cargo build --release --target ${{ matrix.target }} --bin super-stt
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
+            # Native build for x86_64
+            if [ -z "${{ matrix.features }}" ]; then
+              cargo build --release --target ${{ matrix.target }} --bin super-stt
+            else
+              cargo build --release --target ${{ matrix.target }} --bin super-stt --features "${{ matrix.features }}"
+            fi
           else
-            cargo build --release --target ${{ matrix.target }} --bin super-stt --features "${{ matrix.features }}"
+            # Cross-compilation for other targets
+            if [ -z "${{ matrix.features }}" ]; then
+              cross build --release --target ${{ matrix.target }} --bin super-stt
+            else
+              cross build --release --target ${{ matrix.target }} --bin super-stt --features "${{ matrix.features }}"
+            fi
           fi
 
       - name: Build app binary
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin super-stt-app
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
+            cargo build --release --target ${{ matrix.target }} --bin super-stt-app
+          else
+            cross build --release --target ${{ matrix.target }} --bin super-stt-app
+          fi
 
       - name: Build applet binary
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin super-stt-cosmic-applet
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
+            cargo build --release --target ${{ matrix.target }} --bin super-stt-cosmic-applet
+          else
+            cross build --release --target ${{ matrix.target }} --bin super-stt-cosmic-applet
+          fi
 
       - name: Create tarball
         run: |
