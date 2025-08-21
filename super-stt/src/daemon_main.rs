@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+
 //! Main daemon entry point and coordination
 //!
 //! This module serves as the entry point for the daemon and coordinates
@@ -67,15 +68,19 @@ pub async fn run() -> Result<()> {
             config.audio.theme
         };
 
-    // Initialize logging
-    let log_level = if verbose {
-        log::LevelFilter::Debug
+    // Initialize logging - respect RUST_LOG env var, fallback to verbose flag
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
     } else {
-        log::LevelFilter::Info
-    };
-    env_logger::Builder::from_default_env()
-        .filter_level(log_level)
-        .init();
+        let log_level = if verbose {
+            log::LevelFilter::Debug
+        } else {
+            log::LevelFilter::Info
+        };
+        env_logger::Builder::from_default_env()
+            .filter_level(log_level)
+            .init();
+    }
 
     info!("Starting Super STT Daemon");
     info!("Socket path: {}", socket_path.display());
@@ -147,10 +152,14 @@ async fn handle_record_command(matches: &clap::ArgMatches) -> Result<()> {
         .get_one::<PathBuf>("socket")
         .unwrap_or(&cli::DEFAULT_SOCKET_PATH);
 
-    // Initialize minimal logging for recording mode
-    env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    // Initialize logging for recording mode - respect RUST_LOG env var
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    } else {
+        env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Info)
+            .init();
+    }
 
     info!("Super STT Direct Recording Mode");
 

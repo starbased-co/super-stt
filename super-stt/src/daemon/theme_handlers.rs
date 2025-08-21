@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+
 use crate::audio::beeper::play_beep_sequence;
 use crate::daemon::types::SuperSTTDaemon;
 use log::{error, info};
@@ -60,8 +61,9 @@ impl SuperSTTDaemon {
         }
 
         // Play both start and end sounds to test the theme
-        let (start_frequencies, start_duration) = current_theme.start_sound();
-        let (end_frequencies, end_duration) = current_theme.end_sound();
+        let (start_frequencies, start_duration, start_fade_in, start_fade_out) =
+            current_theme.start_sound();
+        let (end_frequencies, end_duration, end_fade_in, end_fade_out) = current_theme.end_sound();
 
         info!("Testing audio theme: {theme_name}");
         info!("Start frequencies: {start_frequencies:?}, duration: {start_duration}ms");
@@ -69,14 +71,20 @@ impl SuperSTTDaemon {
 
         // Test with start sound first
         info!("Playing start sound...");
-        match play_beep_sequence(&start_frequencies, start_duration) {
+        match play_beep_sequence(
+            &start_frequencies,
+            start_duration,
+            start_fade_in,
+            start_fade_out,
+        ) {
             Ok(()) => {
                 info!("Start sound completed successfully");
 
                 // Test end sound as well
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 info!("Playing end sound...");
-                match play_beep_sequence(&end_frequencies, end_duration) {
+                match play_beep_sequence(&end_frequencies, end_duration, end_fade_in, end_fade_out)
+                {
                     Ok(()) => {
                         info!("End sound completed successfully");
                         DaemonResponse::success()
