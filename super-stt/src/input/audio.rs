@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
+
 use anyhow::Result;
-use log::{debug, warn};
+use log::warn;
 
 use super_stt_shared::audio_utils::{
     ResampleQuality, apply_pre_emphasis, normalize_audio, resample,
@@ -26,12 +27,6 @@ impl AudioProcessor {
     ///
     /// Returns an error if the audio data is invalid.
     pub fn process_audio(&self, audio_data: &[f32], sample_rate: u32) -> Result<Vec<f32>> {
-        debug!(
-            "Processing audio: {} samples at {}Hz",
-            audio_data.len(),
-            sample_rate
-        );
-
         // Ensure audio data is in the correct range (-1 to 1)
         let mut processed = audio_data.to_vec();
         normalize_audio(&mut processed);
@@ -52,7 +47,6 @@ impl AudioProcessor {
             processed.resize(1600, 0.0);
         }
 
-        debug!("Processed audio: {} samples", processed.len());
         Ok(processed)
     }
 

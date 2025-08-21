@@ -198,11 +198,6 @@ impl UdpAudioStreamer {
         // Packet structure: Header(11) + sample_rate(4) + channels(2) + num_samples(4) + samples(4*n)
         let max_samples = (MAX_PACKET_SIZE - 11 - 4 - 2 - 4) / 4; // header + sample_rate + channels + num_samples + 4 bytes per sample
         let samples_to_send = if samples.len() > max_samples {
-            log::debug!(
-                "Truncating audio samples from {} to {} to fit in UDP packet",
-                samples.len(),
-                max_samples
-            );
             &samples[..max_samples]
         } else {
             samples
@@ -417,8 +412,6 @@ impl UdpAudioStreamer {
 
                                         // Send PONG response
                                         let _ = socket.send_to(b"PONG", addr).await;
-                                    } else {
-                                        log::debug!("Received ping from unregistered client at {addr}");
                                     }
                                 }
                             }

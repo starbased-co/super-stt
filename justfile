@@ -97,7 +97,7 @@ run-app *args:
 # Run the daemon for testing purposes
 # Usage: just run-daemon [--model MODEL] [other args]
 run-daemon *args:
-    env RUST_BACKTRACE=full RUST_LOG=debug cargo run --bin {{daemon_name}} -v {{args}}
+    env RUST_BACKTRACE=full RUST_LOG=super_stt=debug cargo run --bin {{daemon_name}} -v {{args}}
 
 # Run security audit to check for vulnerabilities
 audit:

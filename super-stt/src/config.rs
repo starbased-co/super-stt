@@ -66,10 +66,7 @@ impl DaemonConfig {
 
         match fs::read_to_string(&config_path) {
             Ok(content) => match toml::from_str::<DaemonConfig>(&content) {
-                Ok(config) => {
-                    debug!("Loaded daemon config from {}", config_path.display());
-                    config
-                }
+                Ok(config) => config,
                 Err(e) => {
                     warn!(
                         "Failed to parse config file {}: {e}. Using defaults.",
@@ -78,13 +75,7 @@ impl DaemonConfig {
                     Self::default()
                 }
             },
-            Err(e) => {
-                debug!(
-                    "Config file {} not found or unreadable: {e}. Using defaults.",
-                    config_path.display()
-                );
-                Self::default()
-            }
+            Err(_) => Self::default(),
         }
     }
 

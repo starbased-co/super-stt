@@ -93,7 +93,6 @@ impl VoxtralModel {
 
         // Create model
         info!("Creating Voxtral model...");
-        debug!("Config: {config:?}");
         let model = VoxtralForConditionalGeneration::new(&config, vb)?;
 
         // Load tokenizer
@@ -168,24 +167,6 @@ impl VoxtralModel {
             resample(audio_data, sample_rate, SAMPLE_RATE, ResampleQuality::Fast)?
         };
 
-        debug!("Converting audio to mel spectrogram using exact Whisper processing...");
-        debug!(
-            "Input audio length: {} samples at {}Hz",
-            audio.len(),
-            SAMPLE_RATE
-        );
-
-        // Debug input audio statistics
-        let audio_min = audio.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-        let audio_max = audio.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-        let audio_sum: f32 = audio.iter().sum();
-        #[allow(clippy::cast_precision_loss)]
-        let audio_mean = audio_sum / audio.len() as f32;
-
-        debug!(
-            "Input audio stats - Min: {audio_min:.6}, Max: {audio_max:.6}, Mean: {audio_mean:.6}"
-        );
-
         // CRITICAL: VoxtralProcessor pads audio to multiple of 480000 samples before WhisperFeatureExtractor
         // This matches VoxtralProcessorKwargs pad_to_multiple_of: 480000
         let chunk_size = 480_000; // 30 seconds * 16000 Hz
@@ -207,11 +188,6 @@ impl VoxtralModel {
         cursor.read_f32_into::<LittleEndian>(&mut mel_filters)?;
 
         let audio_features = audio::extract_features(&padded_audio, &mel_filters, &self.device)?;
-
-        debug!(
-            "Audio features shape after Python-style chunking: {:?}",
-            audio_features.dims()
-        );
 
         let (result, tokens) = transcribe_with_voxtral(
             &self.model,
@@ -312,9 +288,6 @@ fn transcribe_with_voxtral(
     device: &Device,
     cache: &VoxtralCache,
 ) -> Result<(String, Vec<u32>)> {
-    debug!("Audio features shape: {:?}", audio_features.dims());
-    debug!("Using audio_token_id: {audio_token_id}");
-
     // Validate audio features shape
     let audio_dims = audio_features.dims();
     if audio_dims.len() != 3 {
@@ -331,8 +304,6 @@ fn transcribe_with_voxtral(
         ));
     }
 
-    debug!("Audio features validation passed");
-
     // Create the exact token sequence that HuggingFace processor generates
     let mut input_tokens = Vec::new();
 
@@ -343,15 +314,10 @@ fn transcribe_with_voxtral(
 
     // Calculate number of audio tokens to match Python exactly: 7 chunks × 375 tokens = 2625
     let batch_size = audio_features.dim(0)?; // Number of chunks (should be 7)
-    let frames_per_chunk = audio_features.dim(2)?; // Should be 3000
-    debug!("Audio features: {batch_size} chunks, {frames_per_chunk} frames per chunk");
 
     // Python uses exactly 375 tokens per 3000-frame chunk
     let tokens_per_chunk = 375; // Fixed value from Python analysis
     let num_audio_tokens = batch_size * tokens_per_chunk;
-    debug!(
-        "Using {num_audio_tokens} audio tokens ({batch_size} chunks × {tokens_per_chunk} tokens per chunk)"
-    );
 
     // Add AUDIO tokens
     for _ in 0..num_audio_tokens {
@@ -366,18 +332,6 @@ fn transcribe_with_voxtral(
     input_tokens.push(1058u32); // :
     input_tokens.push(1262u32); // en
     input_tokens.push(34u32); // [TRANSCRIBE]
-
-    debug!("=== RUST PROCESSING DEBUG ===");
-    debug!("Total tokens: {}", input_tokens.len());
-    debug!("Audio token count (24s): {num_audio_tokens}");
-    debug!(
-        "First 10 tokens: {:?}",
-        &input_tokens[..input_tokens.len().min(10)]
-    );
-    debug!(
-        "Last 10 tokens: {:?}",
-        &input_tokens[input_tokens.len().saturating_sub(10)..]
-    );
 
     let input_len = input_tokens.len();
     let input_ids = Tensor::new(input_tokens, device)?.unsqueeze(0)?;
@@ -395,18 +349,13 @@ fn transcribe_with_voxtral(
     };
 
     // Generate response using the model (match Python parameters)
-    debug!("About to call model.generate()");
     let generated_tokens = model
         .generate(
             &input_ids,
             Some(audio_features), // Audio features will be processed and inserted at audio token position
             config,
         )
-        .map_err(|e| {
-            debug!("Generation error: {e:?}");
-            debug!("Error details: {e:#}");
-            anyhow::anyhow!("Failed to generate tokens: {}", e)
-        })?;
+        .map_err(|e| anyhow::anyhow!("Failed to generate tokens: {}", e))?;
 
     // Decode only the newly generated tokens (skip input prompt)
     let new_tokens = if generated_tokens.len() > input_len {
@@ -415,24 +364,12 @@ fn transcribe_with_voxtral(
         &generated_tokens
     };
 
-    debug!("=== RUST TOKEN OUTPUT DEBUG ===");
-    debug!("Total new tokens generated: {}", new_tokens.len());
-    debug!("Full token list: {new_tokens:?}");
-    debug!("First 30 tokens with positions:");
-    for (i, &token_id) in new_tokens.iter().take(30).enumerate() {
-        debug!("  {i:2}: {token_id}");
-    }
-
     let decoded_text = tokenizer
         .decode(new_tokens, tekken::SpecialTokenPolicy::Ignore)
         .map_err(|e| anyhow::anyhow!("Failed to decode tokens: {}", e))?;
 
-    debug!("Full decoded text: {decoded_text}");
-
     // Post-process the transcription to clean up formatting artifacts
     let transcription = post_process_transcription(&decoded_text)?;
-
-    debug!("Final transcription: {transcription}");
 
     // Return both transcription and tokens
     Ok((transcription, new_tokens.to_vec()))
