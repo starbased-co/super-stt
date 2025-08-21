@@ -279,12 +279,14 @@ impl UdpAudioStreamer {
 
     /// Internal method to broadcast a packet to all registered clients
     async fn broadcast_packet(&self, packet: &[u8]) -> Result<()> {
-        let clients = self.clients.read().await;
+        let mut clients = self.clients.write().await;
         let mut failed_clients = Vec::new();
 
-        for (client_id, client) in clients.iter() {
+        for (client_id, client) in clients.iter_mut() {
             match self.socket.send_to(packet, &client.addr).await {
                 Ok(_) => {
+                    // Update last_seen to prevent stale client cleanup
+                    client.last_seen = Instant::now();
                     log::trace!("Sent packet to client: {client_id}");
                 }
                 Err(e) => {
@@ -294,14 +296,10 @@ impl UdpAudioStreamer {
             }
         }
 
-        // Remove failed clients (but don't hold the lock while doing it)
-        drop(clients);
-        if !failed_clients.is_empty() {
-            let mut clients = self.clients.write().await;
-            for client_id in failed_clients {
-                clients.remove(&client_id);
-                log::info!("Removed failed client: {client_id}");
-            }
+        // Remove failed clients
+        for client_id in failed_clients {
+            clients.remove(&client_id);
+            log::info!("Removed failed client: {client_id}");
         }
 
         Ok(())
@@ -361,7 +359,13 @@ impl UdpAudioStreamer {
         let auth = self.auth.clone();
         let mut shutdown_rx = shutdown_tx.subscribe();
 
+        // Create a channel to signal when the listener is ready
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+
         tokio::spawn(async move {
+            // Signal that we're ready to listen
+            let _ = ready_tx.send(());
+
             let mut buf = [0u8; 1024];
 
             loop {
@@ -401,6 +405,21 @@ impl UdpAudioStreamer {
                                             let _ = socket.send_to(b"AUTH_ERROR", addr).await;
                                         }
                                     }
+                                } else if len == 4 && &buf[0..4] == b"PING" {
+                                    // Handle keep-alive ping from registered clients
+                                    let client_id = format!("udp_client_{}", addr.port());
+                                    let mut clients_guard = clients.write().await;
+
+                                    if let Some(client) = clients_guard.get_mut(&client_id) {
+                                        // Update last_seen timestamp to prevent cleanup
+                                        client.last_seen = Instant::now();
+                                        log::trace!("Keep-alive ping from client: {client_id}");
+
+                                        // Send PONG response
+                                        let _ = socket.send_to(b"PONG", addr).await;
+                                    } else {
+                                        log::debug!("Received ping from unregistered client at {addr}");
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -417,6 +436,11 @@ impl UdpAudioStreamer {
             }
         });
 
+        // Wait for the listener to be ready before returning
+        ready_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Registration listener failed to start"))?;
+
         Ok(())
     }
 
@@ -426,6 +450,30 @@ impl UdpAudioStreamer {
     /// This function will return an error if the authentication resources cannot be cleaned up.
     pub fn cleanup_auth(&self) -> Result<()> {
         self.auth.cleanup()
+    }
+
+    /// Get the local socket address for testing purposes
+    ///
+    /// # Errors
+    /// Throws error if it fails to get local address
+    pub fn local_addr(&self) -> Result<std::net::SocketAddr> {
+        self.socket
+            .local_addr()
+            .map_err(|e| anyhow::anyhow!("Failed to get local addr: {e}"))
+    }
+
+    /// Get client by ID for testing purposes
+    pub async fn get_client(&self, client_id: &str) -> Option<StreamClient> {
+        let clients = self.clients.read().await;
+        clients.get(client_id).cloned()
+    }
+
+    /// Broadcast a packet to all clients for testing purposes
+    ///
+    /// # Errors
+    /// Throws error if it fails to broadcast test package.
+    pub async fn broadcast_test_packet(&self, packet: &[u8]) -> Result<()> {
+        self.broadcast_packet(packet).await
     }
 }
 
@@ -444,5 +492,126 @@ mod tests {
             12345
         );
         assert_eq!(u16::from_le_bytes([bytes[9], bytes[10]]), 5);
+    }
+
+    #[tokio::test]
+    async fn test_client_registration_and_keepalive() {
+        // Create a UDP streamer
+        let streamer = UdpAudioStreamer::new("127.0.0.1:0").await.unwrap();
+
+        // Register a client
+        let client_addr = "127.0.0.1:12345".parse().unwrap();
+        let client_id = streamer
+            .register_client(client_addr, "test".to_string())
+            .await;
+
+        // Verify client is registered
+        assert_eq!(streamer.client_count().await, 1);
+
+        // Check initial last_seen timestamp
+        let clients = streamer.clients.read().await;
+        let client = clients.get(&client_id).unwrap();
+        let initial_time = client.last_seen;
+        drop(clients);
+
+        // Simulate a small delay
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Send a packet to update last_seen
+        let test_packet = vec![1, 2, 3, 4];
+        streamer.broadcast_test_packet(&test_packet).await.unwrap();
+
+        // Verify last_seen was updated
+        let clients = streamer.clients.read().await;
+        let client = clients.get(&client_id).unwrap();
+        assert!(
+            client.last_seen > initial_time,
+            "last_seen should be updated after broadcast"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stale_client_cleanup() {
+        let streamer = UdpAudioStreamer::new("127.0.0.1:0").await.unwrap();
+
+        // Register a client
+        let client_addr = "127.0.0.1:12346".parse().unwrap();
+        let client_id = streamer
+            .register_client(client_addr, "test".to_string())
+            .await;
+
+        // Manually set an old timestamp to simulate stale client
+        {
+            let mut clients = streamer.clients.write().await;
+            if let Some(client) = clients.get_mut(&client_id) {
+                client.last_seen = Instant::now() - Duration::from_secs(400); // 6+ minutes ago
+            }
+        }
+
+        // Simulate cleanup check
+        let stale_timeout = Duration::from_secs(300); // 5 minutes
+        let now = Instant::now();
+
+        let mut clients = streamer.clients.write().await;
+        let stale_clients: Vec<String> = clients
+            .iter()
+            .filter(|(_, client)| now.duration_since(client.last_seen) > stale_timeout)
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        // Verify client is identified as stale
+        assert_eq!(stale_clients.len(), 1);
+        assert_eq!(stale_clients[0], client_id);
+
+        // Remove stale client
+        for client_id in stale_clients {
+            clients.remove(&client_id);
+        }
+
+        // Verify client was removed
+        assert_eq!(clients.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_packet_updates_timestamps() {
+        let streamer = UdpAudioStreamer::new("127.0.0.1:0").await.unwrap();
+
+        // Register multiple clients
+        let client1_addr = "127.0.0.1:12347".parse().unwrap();
+        let client2_addr = "127.0.0.1:12348".parse().unwrap();
+
+        let client1_id = streamer
+            .register_client(client1_addr, "test1".to_string())
+            .await;
+        let client2_id = streamer
+            .register_client(client2_addr, "test2".to_string())
+            .await;
+
+        // Get initial timestamps
+        let clients = streamer.clients.read().await;
+        let client1_initial = clients.get(&client1_id).unwrap().last_seen;
+        let client2_initial = clients.get(&client2_id).unwrap().last_seen;
+        drop(clients);
+
+        // Wait a bit
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Broadcast a packet
+        let test_packet = vec![1, 2, 3, 4];
+        streamer.broadcast_test_packet(&test_packet).await.unwrap();
+
+        // Verify both clients' timestamps were updated
+        let clients = streamer.clients.read().await;
+        let client1_updated = clients.get(&client1_id).unwrap().last_seen;
+        let client2_updated = clients.get(&client2_id).unwrap().last_seen;
+
+        assert!(
+            client1_updated > client1_initial,
+            "Client 1 timestamp should be updated"
+        );
+        assert!(
+            client2_updated > client2_initial,
+            "Client 2 timestamp should be updated"
+        );
     }
 }
