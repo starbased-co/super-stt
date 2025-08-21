@@ -370,12 +370,12 @@ impl DaemonAudioRecorder {
             log::debug!("Skipping start sound for Silent theme");
             return;
         }
-        let (frequencies, duration) = self.audio_theme.start_sound();
+        let (frequencies, duration, fade_in, fade_out) = self.audio_theme.start_sound();
         std::thread::spawn(move || {
             if let Err(e) = beeper::play_warmup_tone() {
                 log::debug!("Warm-up tone failed, continuing anyway: {e}");
             }
-            if let Err(e) = beeper::play_beep_sequence(&frequencies, duration) {
+            if let Err(e) = beeper::play_beep_sequence(&frequencies, duration, fade_in, fade_out) {
                 log::warn!("Failed to play start sound (audio permissions may be missing): {e}");
             }
         });
@@ -387,12 +387,12 @@ impl DaemonAudioRecorder {
             log::debug!("Skipping end sound for Silent theme");
             return;
         }
-        let (frequencies, duration) = self.audio_theme.end_sound();
+        let (frequencies, duration, fade_in, fade_out) = self.audio_theme.end_sound();
         std::thread::spawn(move || {
             if let Err(e) = beeper::play_warmup_tone() {
                 log::debug!("Warm-up tone failed, continuing anyway: {e}");
             }
-            if let Err(e) = beeper::play_beep_sequence(&frequencies, duration) {
+            if let Err(e) = beeper::play_beep_sequence(&frequencies, duration, fade_in, fade_out) {
                 log::warn!("Failed to play end sound (audio permissions may be missing): {e}");
             }
         });
