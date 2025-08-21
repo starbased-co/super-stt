@@ -258,33 +258,47 @@ impl cosmic::Application for SuperSttApplet {
 
                     let mut buffer = [0u8; 1024];
                     let mut rate_limiter = TokenBucketRateLimiter::for_audio_processing();
+                    let mut keepalive_interval =
+                        tokio::time::interval(tokio::time::Duration::from_secs(60));
 
                     loop {
-                        match socket.recv_from(&mut buffer).await {
-                            Ok((len, _addr)) => {
-                                // Apply rate limiting to prevent UDP flooding DoS attacks
-                                if !rate_limiter.try_consume() {
-                                    // Rate limited - drop packet and log warning
-                                    warn!("UDP packet rate limit exceeded, dropping packet");
+                        tokio::select! {
+                            // Handle incoming UDP data
+                            recv_result = socket.recv_from(&mut buffer) => {
+                                match recv_result {
+                                    Ok((len, _addr)) => {
+                                        // Apply rate limiting to prevent UDP flooding DoS attacks
+                                        if !rate_limiter.try_consume() {
+                                            // Rate limited - drop packet and log warning
+                                            warn!("UDP packet rate limit exceeded, dropping packet");
 
-                                    // Optional: Add a small delay to further throttle rapid senders
-                                    if let Some(delay) = rate_limiter.time_until_next_token() {
-                                        tokio::time::sleep(
-                                            delay.min(std::time::Duration::from_millis(10)),
-                                        )
-                                        .await;
+                                            // Optional: Add a small delay to further throttle rapid senders
+                                            if let Some(delay) = rate_limiter.time_until_next_token() {
+                                                tokio::time::sleep(
+                                                    delay.min(std::time::Duration::from_millis(10)),
+                                                )
+                                                .await;
+                                            }
+                                            continue;
+                                        }
+
+                                        let data = buffer[..len].to_vec();
+                                        if channel.send(Message::UdpData(data)).await.is_err() {
+                                            break;
+                                        }
                                     }
-                                    continue;
-                                }
-
-                                let data = buffer[..len].to_vec();
-                                if channel.send(Message::UdpData(data)).await.is_err() {
-                                    break;
+                                    Err(e) => {
+                                        warn!("UDP receive error: {e}");
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                warn!("UDP receive error: {e}");
-                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            // Send periodic keep-alive pings
+                            _ = keepalive_interval.tick() => {
+                                // Send keep-alive ping to maintain connection
+                                if let Err(e) = socket.send_to(b"PING", "127.0.0.1:8765").await {
+                                    warn!("Failed to send UDP keep-alive: {e}");
+                                }
                             }
                         }
                     }
