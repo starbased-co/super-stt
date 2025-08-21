@@ -115,8 +115,6 @@ impl WhisperModel {
             std::fs::read_to_string(config_path).context("Failed to read config file")?;
         let config: Config = serde_json::from_str(&config_str).context("Failed to parse config")?;
 
-        debug!("Model config: {config:?}");
-
         // Load tokenizer
         let tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;

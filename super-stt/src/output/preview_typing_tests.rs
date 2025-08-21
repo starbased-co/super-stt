@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+
 use super::PreviewTyper;
 use std::time::Instant;
 
