@@ -18,7 +18,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
 
-This software incorporates components from third-party projects. The original 
+This software incorporates components from third-party projects. The original
 copyright notices and licenses for these components are included below:
 
 HuggingFace Candle Framework
@@ -40,7 +40,7 @@ licenses. The exact licenses have been verified using `cargo license`:
 
 Core Dependencies:
 - tokio (MIT) - Asynchronous runtime
-- serde (Apache-2.0 OR MIT) - Serialization framework  
+- serde (Apache-2.0 OR MIT) - Serialization framework
 - clap (Apache-2.0 OR MIT) - Command line argument parsing
 - anyhow (Apache-2.0 OR MIT) - Error handling
 - reqwest (Apache-2.0 OR MIT) - HTTP client
@@ -57,10 +57,14 @@ Security and System Libraries:
 For a complete list of all dependencies and their exact licenses, run:
 `cargo license` in the project directory.
 
-Full license texts and attribution information for all dependencies can be 
+Full license texts and attribution information for all dependencies can be
 found in their respective source repositories and documentation.
+
+Python Libraries (References only)
+----------------------------------
+- RealtimeSTT (MIT) - Speech-to-text library
 
 ================================================================================
 
-For questions about licensing or to report license-related issues, please 
+For questions about licensing or to report license-related issues, please
 contact: jorge@menjivar.ai

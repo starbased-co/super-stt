@@ -156,6 +156,35 @@ impl STTModel {
             Self::VoxtralMini => ("mistralai/Voxtral-Mini-3B-2507", "main"),
         }
     }
+
+    /// Get minimum processing interval for real-time transcription based on model performance characteristics
+    #[must_use]
+    pub fn get_processing_interval(&self) -> std::time::Duration {
+        match self {
+            // Fast models - can handle frequent updates
+            Self::WhisperTiny | Self::WhisperTinyEn => std::time::Duration::from_millis(1000),
+            Self::WhisperBase | Self::WhisperBaseEn => std::time::Duration::from_millis(1500),
+
+            // Semi-fast models - can handle frequent updates but with a slight delay
+            Self::VoxtralMini
+            | Self::WhisperSmall
+            | Self::WhisperSmallEn
+            | Self::WhisperDistilMediumEn
+            | Self::WhisperMedium
+            | Self::WhisperMediumEn => std::time::Duration::from_millis(2000),
+            Self::WhisperDistilLargeV2 | Self::WhisperDistilLargeV3 => {
+                std::time::Duration::from_millis(2000)
+            }
+            Self::VoxtralSmall | Self::WhisperLargeV3Turbo => {
+                std::time::Duration::from_millis(3000)
+            }
+
+            // Large models - conservative intervals
+            Self::WhisperLarge | Self::WhisperLargeV2 | Self::WhisperLargeV3 => {
+                std::time::Duration::from_millis(5000)
+            }
+        }
+    }
 }
 
 impl FromStr for STTModel {
