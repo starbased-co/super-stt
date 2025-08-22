@@ -169,12 +169,6 @@ impl DaemonAudioRecorder {
         let sample_format = config.sample_format();
         let stream_config = config.config();
 
-        log::info!(
-            "Using audio format: {:?} at {}Hz with streaming",
-            sample_format,
-            stream_config.sample_rate.0
-        );
-
         // Create channel for sending audio samples from callback to async task for frequency analysis
         let (samples_tx, mut samples_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<f32>>();
 

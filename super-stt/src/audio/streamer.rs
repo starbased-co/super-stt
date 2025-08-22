@@ -111,7 +111,6 @@ impl UdpAudioStreamer {
         packet.extend_from_slice(&header_bytes);
         packet.extend_from_slice(&data_bytes);
 
-        log::info!("Broadcasting recording state: is_recording={is_recording}");
         self.broadcast_packet(&packet).await
     }
 
@@ -221,14 +220,6 @@ impl UdpAudioStreamer {
         packet.extend_from_slice(&header_bytes);
         packet.extend_from_slice(&data_bytes);
 
-        log::info!(
-            "Broadcasting {} audio samples: packet_size={} (header={}, audio_data={}), data_len_in_header={}",
-            samples_to_send.len(),
-            packet.len(),
-            header_bytes.len(),
-            data_bytes.len(),
-            u16::from_le_bytes([header_bytes[9], header_bytes[10]])
-        );
         self.broadcast_packet(&packet).await
     }
 
@@ -263,12 +254,6 @@ impl UdpAudioStreamer {
         packet.extend_from_slice(&header_bytes);
         packet.extend_from_slice(&data_bytes);
 
-        log::trace!(
-            "Broadcasting {} frequency bands: packet_size={} bytes, total_energy={:.3}",
-            bands.len(),
-            packet.len(),
-            total_energy
-        );
         self.broadcast_packet(&packet).await
     }
 

@@ -198,7 +198,6 @@ impl VoxtralModel {
             &self.cache.clone(),
         )?;
 
-        debug!("Transcription result: {result}");
         Ok((result, tokens))
     }
 
@@ -403,8 +402,6 @@ fn load_model_config(config_file: &PathBuf) -> Result<VoxtralConfig> {
         .and_then(serde_json::Value::as_u64)
         .and_then(|v| usize::try_from(v).ok())
         .unwrap_or(24);
-
-    debug!("Using audio_token_id: {audio_token_id}");
 
     // Parse audio config from JSON
     let audio_config = parse_audio_config(&json)?;
