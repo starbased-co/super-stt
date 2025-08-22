@@ -45,14 +45,14 @@ fn raw_level_to_db_display_percent(raw_level: f32) -> f32 {
 /// Parse UDP packet containing audio level data from daemon
 pub fn parse_audio_level_from_udp(data: &[u8]) -> AudioLevelData {
     // Check if this is a text-based registration response or control message
-    if let Ok(text) = std::str::from_utf8(data) {
-        if text.starts_with("REGISTER") || text.starts_with("OK") || text.starts_with("PONG") {
-            // This is a control message, not audio data - ignore for audio level
-            return AudioLevelData {
-                level: 0.0,
-                is_speech: false,
-            };
-        }
+    if let Ok(text) = std::str::from_utf8(data)
+        && (text.starts_with("REGISTER") || text.starts_with("OK") || text.starts_with("PONG"))
+    {
+        // This is a control message, not audio data - ignore for audio level
+        return AudioLevelData {
+            level: 0.0,
+            is_speech: false,
+        };
     }
 
     // Try parsing as frequency bands first (more common from daemon)
