@@ -188,7 +188,6 @@ impl NotificationManager {
             .collect();
 
         if eligible_subscribers.is_empty() {
-            debug!("No eligible subscribers for event '{event_type}'");
             return Ok(0);
         }
 
