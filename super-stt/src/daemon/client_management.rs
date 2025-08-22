@@ -129,9 +129,7 @@ impl SuperSTTDaemon {
             }
 
             // Handle regular commands with stream access for authentication
-            let response = self
-                .handle_command_with_stream(request, Some(&stream))
-                .await;
+            let response = self.handle_command(request).await;
             if let Err(e) = self.send_response(&mut stream, &response).await {
                 warn!("Failed to send response: {e}");
                 break;
@@ -336,6 +334,5 @@ impl SuperSTTDaemon {
         {
             warn!("Failed to broadcast recording state via UDP: {e}");
         }
-        log::info!("Recording state changed: is_recording={is_recording}");
     }
 }
