@@ -68,20 +68,22 @@ pub fn process_audio_samples(
                 if state.silence_start.is_none() {
                     state.silence_start = Some(Instant::now());
                 }
-                if let Some(silence_start) = state.silence_start {
-                    if silence_start.elapsed() >= SILENCE_TIMEOUT && !state.stop_requested {
-                        state.stop_requested = true;
-                    }
+                if let Some(silence_start) = state.silence_start
+                    && silence_start.elapsed() >= SILENCE_TIMEOUT
+                    && !state.stop_requested
+                {
+                    state.stop_requested = true;
                 }
             }
-        } else if let Some(recording_start) = state.recording_start {
-            if recording_start.elapsed() >= NO_SPEECH_TIMEOUT && !state.stop_requested {
-                log::warn!(
-                    "⚠️  No speech detected for {} seconds, stopping...",
-                    NO_SPEECH_TIMEOUT.as_secs()
-                );
-                state.stop_requested = true;
-            }
+        } else if let Some(recording_start) = state.recording_start
+            && recording_start.elapsed() >= NO_SPEECH_TIMEOUT
+            && !state.stop_requested
+        {
+            log::warn!(
+                "⚠️  No speech detected for {} seconds, stopping...",
+                NO_SPEECH_TIMEOUT.as_secs()
+            );
+            state.stop_requested = true;
         }
     }
 

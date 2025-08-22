@@ -113,12 +113,11 @@ impl UdpAuth {
     pub fn verify_auth_message(&self, message: &str) -> Result<Option<String>> {
         let secret = self.get_or_create_secret()?;
 
-        if let Some(rest) = message.strip_prefix("REGISTER:") {
-            if let Some((client_type, provided_secret)) = rest.split_once(':') {
-                if provided_secret == secret {
-                    return Ok(Some(client_type.to_string()));
-                }
-            }
+        if let Some(rest) = message.strip_prefix("REGISTER:")
+            && let Some((client_type, provided_secret)) = rest.split_once(':')
+            && provided_secret == secret
+        {
+            return Ok(Some(client_type.to_string()));
         }
 
         Ok(None)

@@ -153,16 +153,17 @@ impl SuperSTTDaemon {
                 active_sessions.join(", ")
             )));
         }
-        if let Some(current_model) = *self.model_type.read().await {
-            if current_model == model {
-                info!("Model switch skipped - already using {model}");
-                return Some(
-                    DaemonResponse::success()
-                        .with_message(format!("Already using model: {model}"))
-                        .with_current_model(current_model),
-                );
-            }
+        if let Some(current_model) = *self.model_type.read().await
+            && current_model == model
+        {
+            info!("Model switch skipped - already using {model}");
+            return Some(
+                DaemonResponse::success()
+                    .with_message(format!("Already using model: {model}"))
+                    .with_current_model(current_model),
+            );
         }
+
         None
     }
 
