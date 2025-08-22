@@ -117,12 +117,12 @@ pub fn get_or_initialize_audio_device(
             poisoned.into_inner()
         }
     };
-    if let Some(ref cached) = *cache {
-        if cached.last_verified.elapsed() < DEVICE_CACHE_VALIDITY && cached.initialization_verified
-        {
-            log::debug!("Using cached audio device");
-            return Ok(cached.clone());
-        }
+    if let Some(ref cached) = *cache
+        && cached.last_verified.elapsed() < DEVICE_CACHE_VALIDITY
+        && cached.initialization_verified
+    {
+        log::debug!("Using cached audio device");
+        return Ok(cached.clone());
     }
 
     log::info!("Initializing audio output device...");
@@ -166,12 +166,13 @@ pub fn verify_audio_device_readiness(
         match attempt_device_verification(device_cache, attempt) {
             Ok(()) => {
                 log::debug!("Audio device verification successful on attempt {attempt}");
-                if let Ok(mut cache) = audio_device_cache.lock() {
-                    if let Some(ref mut cached) = cache.as_mut() {
-                        cached.initialization_verified = true;
-                        cached.last_verified = Instant::now();
-                    }
+                if let Ok(mut cache) = audio_device_cache.lock()
+                    && let Some(ref mut cached) = cache.as_mut()
+                {
+                    cached.initialization_verified = true;
+                    cached.last_verified = Instant::now();
                 }
+
                 return Ok(());
             }
             Err(e) => {

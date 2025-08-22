@@ -743,7 +743,7 @@ impl cosmic::Application for SuperSttApplet {
     }
 
     #[allow(clippy::cast_precision_loss, clippy::cast_lossless)]
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         // Show visualizations only when daemon is actively recording AND user has visualizations enabled
         let should_show_visualizations = matches!(self.recording_state, RecordingState::Recording)
             && self.config.ui.show_visualization;
@@ -831,7 +831,7 @@ impl cosmic::Application for SuperSttApplet {
         }
     }
 
-    fn view_window(&self, _id: window::Id) -> Element<Message> {
+    fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
         let content = create_popup_content(&PopupContentParams {
             daemon_state: &self.daemon_state,
             is_open: &self.is_open,
