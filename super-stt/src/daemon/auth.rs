@@ -70,19 +70,19 @@ impl ProcessAuth {
             .pid()
             .ok_or_else(|| anyhow::anyhow!("No peer PID available"))?;
 
-        log::debug!("Verifying peer process PID: {peer_pid}");
+        log::info!("Verifying peer process PID: {peer_pid}");
 
         // Get the executable path of the peer process
         let exe_link = PathBuf::from(format!("/proc/{peer_pid}/exe"));
         let peer_exe_path = match fs::read_link(&exe_link) {
             Ok(path) => path,
             Err(e) => {
-                log::debug!("Could not read peer exe path: {e}");
+                log::error!("Could not read peer exe path: {e}");
                 return Ok(false);
             }
         };
 
-        log::debug!("Peer executable path: {}", peer_exe_path.display());
+        log::info!("Peer executable path: {}", peer_exe_path.display());
 
         // Check if it matches any of our expected paths
         for expected_path in &self.expected_stt_paths {
@@ -93,10 +93,6 @@ impl ProcessAuth {
 
             // Compare the resolved paths
             if peer_exe_path == resolved_expected {
-                log::debug!(
-                    "✓ Peer process matches expected stt binary: {}",
-                    resolved_expected.display()
-                );
                 return Ok(true);
             }
         }
@@ -106,15 +102,13 @@ impl ProcessAuth {
         if let Ok(comm) = fs::read_to_string(&comm_path) {
             let process_name = comm.trim();
             if process_name == "super-stt" || process_name == "stt" {
-                log::debug!("✓ Peer process name matches: {process_name}");
                 return Ok(true);
             }
-            log::debug!(
+            log::info!(
                 "Process name '{process_name}' does not match expected names (super-stt, stt)"
             );
         }
 
-        log::debug!("✗ Peer process does not match any expected stt binary");
         Ok(false)
     }
 

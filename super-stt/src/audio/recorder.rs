@@ -134,8 +134,8 @@ impl DaemonAudioRecorder {
     ) -> Result<Vec<f32>> {
         info!("🎤 Starting audio recording with streaming...");
 
-        // Play start sound
-        self.play_start_sound();
+        // Play start sound and wait for it to complete
+        self.play_start_sound_and_wait();
 
         // Clear previous recording
         {
@@ -168,12 +168,6 @@ impl DaemonAudioRecorder {
         let config = self.get_optimal_config(&device)?;
         let sample_format = config.sample_format();
         let stream_config = config.config();
-
-        log::info!(
-            "Using audio format: {:?} at {}Hz with streaming",
-            sample_format,
-            stream_config.sample_rate.0
-        );
 
         // Create channel for sending audio samples from callback to async task for frequency analysis
         let (samples_tx, mut samples_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<f32>>();
@@ -364,34 +358,24 @@ impl DaemonAudioRecorder {
         optimal_config.with_sample_rate(target_rate).pipe(Ok)
     }
 
-    /// Play start recording sound using current theme
-    fn play_start_sound(&self) {
+    /// Play start recording sound using current theme and wait for it to complete
+    fn play_start_sound_and_wait(&self) {
         if self.audio_theme == AudioTheme::Silent {
-            log::debug!("Skipping start sound for Silent theme");
             return;
         }
         let (frequencies, duration, fade_in, fade_out) = self.audio_theme.start_sound();
-        std::thread::spawn(move || {
-            if let Err(e) = beeper::play_warmup_tone() {
-                log::debug!("Warm-up tone failed, continuing anyway: {e}");
-            }
-            if let Err(e) = beeper::play_beep_sequence(&frequencies, duration, fade_in, fade_out) {
-                log::warn!("Failed to play start sound (audio permissions may be missing): {e}");
-            }
-        });
+        if let Err(e) = beeper::play_beep_sequence(&frequencies, duration, fade_in, fade_out) {
+            log::warn!("Failed to play start sound (audio permissions may be missing): {e}");
+        }
     }
 
     /// Play end recording sound using current theme
     fn play_end_sound(&self) {
         if self.audio_theme == AudioTheme::Silent {
-            log::debug!("Skipping end sound for Silent theme");
             return;
         }
         let (frequencies, duration, fade_in, fade_out) = self.audio_theme.end_sound();
         std::thread::spawn(move || {
-            if let Err(e) = beeper::play_warmup_tone() {
-                log::debug!("Warm-up tone failed, continuing anyway: {e}");
-            }
             if let Err(e) = beeper::play_beep_sequence(&frequencies, duration, fade_in, fade_out) {
                 log::warn!("Failed to play end sound (audio permissions may be missing): {e}");
             }

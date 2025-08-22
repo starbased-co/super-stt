@@ -1,3 +1,5 @@
+use log::error;
+
 // SPDX-License-Identifier: GPL-3.0-only
 use crate::{
     daemon_state::RecordingStateData,
@@ -18,16 +20,14 @@ pub fn parse_audio_samples_from_udp(data: &[u8]) -> Result<AudioSamplesData, Str
     // Parse UDP packet for audio samples
     // Packet structure: Header (11 bytes) + sample_rate (4) + channels (2) + num_samples (4) + samples (4*n)
     let data_len = data.len();
-    println!("Parsing audio samples packet: {data_len} bytes");
 
-    if data.len() < 21 {
-        println!("Packet too short: {data_len} bytes (need at least 21)");
+    if data_len < 21 {
+        error!("Packet too short: {data_len} bytes (need at least 21)");
         return Err("Packet too short for audio samples".to_string());
     }
 
     // Parse header
     let packet_type = data[0];
-    println!("Packet type: {packet_type}, expected: {AUDIO_SAMPLES_PACKET}");
     if packet_type != AUDIO_SAMPLES_PACKET {
         return Err("Not an audio samples packet".to_string());
     }
@@ -35,33 +35,26 @@ pub fn parse_audio_samples_from_udp(data: &[u8]) -> Result<AudioSamplesData, Str
     // Skip header (11 bytes) and parse audio samples data
     let audio_data = &data[11..];
     let audio_len = audio_data.len();
-    println!("Audio data length after header: {audio_len} bytes");
-    if audio_data.len() < 10 {
-        println!("Audio data too short: {audio_len} bytes (need at least 10)",);
+    if audio_len < 10 {
+        error!("Audio data too short: {audio_len} bytes (need at least 10)",);
         return Err("Audio samples data too short".to_string());
     }
 
     // Parse sample rate (4 bytes)
     let sample_rate_bytes = [audio_data[0], audio_data[1], audio_data[2], audio_data[3]];
     let sample_rate = f32::from_le_bytes(sample_rate_bytes);
-    println!("Sample rate: {sample_rate}");
 
     // Parse channels (2 bytes)
     let channels_bytes = [audio_data[4], audio_data[5]];
     let channels = u16::from_le_bytes(channels_bytes);
-    println!("Channels: {channels}");
 
     // Parse number of samples (4 bytes)
     let num_samples_bytes = [audio_data[6], audio_data[7], audio_data[8], audio_data[9]];
     let num_samples = u32::from_le_bytes(num_samples_bytes);
-    println!("Number of samples: {num_samples}");
 
     // Security: Validate num_samples to prevent memory exhaustion attacks
 
     if num_samples > MAX_SAMPLES {
-        println!(
-            "ERROR: Sample count {num_samples} exceeds maximum {MAX_SAMPLES} - potential DoS attack",
-        );
         return Err(format!(
             "Sample count {num_samples} exceeds maximum {MAX_SAMPLES}"
         ));
@@ -70,11 +63,10 @@ pub fn parse_audio_samples_from_udp(data: &[u8]) -> Result<AudioSamplesData, Str
     // Parse samples (4 bytes each)
     let samples_start = 10;
     let expected_data_len = samples_start + (num_samples as usize * 4);
-    println!("Expected data length: {expected_data_len} bytes, actual: {audio_len} bytes",);
 
     // Additional security: Check total packet size
     if audio_len > MAX_PACKET_SIZE {
-        println!(
+        error!(
             "ERROR: Packet size {audio_len} exceeds maximum {MAX_PACKET_SIZE} - potential DoS attack",
         );
         return Err(format!(
@@ -83,7 +75,7 @@ pub fn parse_audio_samples_from_udp(data: &[u8]) -> Result<AudioSamplesData, Str
     }
 
     if audio_len < expected_data_len {
-        println!(
+        error!(
             "ERROR: Insufficient data for audio samples - expected {expected_data_len} bytes, got {audio_len} bytes",
         );
         return Err("Insufficient data for audio samples".to_string());

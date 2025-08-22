@@ -115,8 +115,6 @@ impl WhisperModel {
             std::fs::read_to_string(config_path).context("Failed to read config file")?;
         let config: Config = serde_json::from_str(&config_str).context("Failed to parse config")?;
 
-        debug!("Model config: {config:?}");
-
         // Load tokenizer
         let tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
@@ -177,11 +175,7 @@ impl WhisperModel {
     ///
     /// Returns an error if the audio data cannot be converted to a mel spectrogram.
     pub fn transcribe_audio(&mut self, audio_data: &[f32], sample_rate: u32) -> Result<String> {
-        debug!(
-            "Transcribing audio: {} samples at {}Hz",
-            audio_data.len(),
-            sample_rate
-        );
+        debug!("Transcribing audio with sample rate {sample_rate}Hz");
 
         // Resample to 16kHz if needed
         let audio = if sample_rate == SAMPLE_RATE {
@@ -191,7 +185,6 @@ impl WhisperModel {
             resample(audio_data, sample_rate, SAMPLE_RATE, ResampleQuality::Fast)?
         };
 
-        debug!("Converting audio to mel spectrogram...");
         // Use optimized Candle audio processing
         let mel = audio::pcm_to_mel(&self.config, &audio, &self.mel_filters);
         let mel_len = mel.len();
@@ -206,12 +199,8 @@ impl WhisperModel {
         )
         .context("Failed to create mel tensor")?;
 
-        debug!("Mel tensor shape: {:?}", mel.dims());
-        debug!("Starting optimized inference with segmentation...");
-
         let result = self.run_segmented(&mel)?;
 
-        debug!("Transcription result: {result}");
         Ok(result)
     }
 
@@ -222,17 +211,12 @@ impl WhisperModel {
 
         let n_frames = 3000;
 
-        debug!("Processing {content_frames} frames in segments of {n_frames}");
-
         while seek < content_frames {
-            let start_time = std::time::Instant::now();
-
             // Calculate segment size
             let segment_size = usize::min(content_frames - seek, n_frames);
 
             // Extract mel segment using narrow
             let mel_segment = mel.narrow(2, seek, segment_size)?;
-            debug!("Processing segment at {seek}, size: {segment_size}");
 
             // Decode this segment with fallback temperatures
             let segment_result = self.decode_with_fallback(&mel_segment)?;
@@ -242,8 +226,6 @@ impl WhisperModel {
             }
 
             seek += segment_size;
-
-            debug!("Segment completed in {:?}", start_time.elapsed());
         }
 
         // Join all segment results
@@ -259,9 +241,6 @@ impl WhisperModel {
                 Ok(result) => {
                     // Simple quality check - if we get reasonable text, use it
                     if !result.trim().is_empty() && result.len() > 5 {
-                        if i > 0 {
-                            debug!("Used fallback temperature: {temperature}");
-                        }
                         return Ok(result);
                     }
                 }
@@ -269,7 +248,6 @@ impl WhisperModel {
                     if i == temperatures.len() - 1 {
                         return Err(e);
                     }
-                    debug!("Temperature {temperature} failed, trying next: {e}");
                 }
             }
         }

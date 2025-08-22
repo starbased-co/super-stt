@@ -162,7 +162,6 @@ pub fn verify_audio_device_readiness(
     audio_device_cache: &Arc<Mutex<Option<AudioDeviceCache>>>,
     device_cache: &AudioDeviceCache,
 ) -> Result<()> {
-    log::debug!("Verifying audio device readiness...");
     for attempt in 1..=DEVICE_VERIFICATION_ATTEMPTS {
         match attempt_device_verification(device_cache, attempt) {
             Ok(()) => {
