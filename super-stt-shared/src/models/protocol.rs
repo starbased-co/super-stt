@@ -329,7 +329,6 @@ pub enum Command {
         sample_rate: u32,
     },
     Record {
-        client_id: String,
         write_mode: bool,
     },
     SetAudioTheme {
@@ -554,20 +553,13 @@ fn cmd_realtime_audio(request: &DaemonRequest) -> Result<Command, String> {
 }
 
 fn cmd_record(request: &DaemonRequest) -> Command {
-    let client_id = request
-        .client_id
-        .clone()
-        .unwrap_or_else(|| format!("record_{}", uuid::Uuid::new_v4()));
     let write_mode = request
         .data
         .as_ref()
         .and_then(|data| data.get("write_mode"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    Command::Record {
-        client_id,
-        write_mode,
-    }
+    Command::Record { write_mode }
 }
 
 fn cmd_set_audio_theme(request: &DaemonRequest) -> Result<Command, String> {
