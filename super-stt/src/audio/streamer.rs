@@ -111,7 +111,6 @@ impl UdpAudioStreamer {
         packet.extend_from_slice(&header_bytes);
         packet.extend_from_slice(&data_bytes);
 
-        log::info!("Broadcasting recording state: is_recording={is_recording}");
         self.broadcast_packet(&packet).await
     }
 
@@ -198,11 +197,6 @@ impl UdpAudioStreamer {
         // Packet structure: Header(11) + sample_rate(4) + channels(2) + num_samples(4) + samples(4*n)
         let max_samples = (MAX_PACKET_SIZE - 11 - 4 - 2 - 4) / 4; // header + sample_rate + channels + num_samples + 4 bytes per sample
         let samples_to_send = if samples.len() > max_samples {
-            log::debug!(
-                "Truncating audio samples from {} to {} to fit in UDP packet",
-                samples.len(),
-                max_samples
-            );
             &samples[..max_samples]
         } else {
             samples
@@ -226,14 +220,6 @@ impl UdpAudioStreamer {
         packet.extend_from_slice(&header_bytes);
         packet.extend_from_slice(&data_bytes);
 
-        log::info!(
-            "Broadcasting {} audio samples: packet_size={} (header={}, audio_data={}), data_len_in_header={}",
-            samples_to_send.len(),
-            packet.len(),
-            header_bytes.len(),
-            data_bytes.len(),
-            u16::from_le_bytes([header_bytes[9], header_bytes[10]])
-        );
         self.broadcast_packet(&packet).await
     }
 
@@ -268,12 +254,6 @@ impl UdpAudioStreamer {
         packet.extend_from_slice(&header_bytes);
         packet.extend_from_slice(&data_bytes);
 
-        log::trace!(
-            "Broadcasting {} frequency bands: packet_size={} bytes, total_energy={:.3}",
-            bands.len(),
-            packet.len(),
-            total_energy
-        );
         self.broadcast_packet(&packet).await
     }
 
@@ -417,8 +397,6 @@ impl UdpAudioStreamer {
 
                                         // Send PONG response
                                         let _ = socket.send_to(b"PONG", addr).await;
-                                    } else {
-                                        log::debug!("Received ping from unregistered client at {addr}");
                                     }
                                 }
                             }

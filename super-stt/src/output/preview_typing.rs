@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+
 use enigo::{Enigo, Keyboard};
 use log::{debug, info};
 use std::sync::{Arc, atomic::AtomicUsize};

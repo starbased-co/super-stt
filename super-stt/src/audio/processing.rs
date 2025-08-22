@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::audio::state::{
-    DEBUG_PRINT_INTERVAL, GRACE_PERIOD, NO_SPEECH_TIMEOUT, RecordingState, SILENCE_TIMEOUT,
-};
+use crate::audio::state::{GRACE_PERIOD, NO_SPEECH_TIMEOUT, RecordingState, SILENCE_TIMEOUT};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use super_stt_shared::models::audio::AudioLevel;
 use tokio::sync::broadcast;
-static DEBUG_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Process mono audio samples for recording state and levels
 ///
@@ -51,26 +47,10 @@ pub fn process_audio_samples(
     let recent_activity = state.speech_buffer.iter().rev().take(3).any(|&x| x);
     state.update_adaptive_levels(rms, recent_activity);
 
-    let counter = DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
-    if counter % DEBUG_PRINT_INTERVAL == 0 {
-        log::debug!(
-            "🔊 Audio: {:.4}, Baseline: {:.4}, Active: {:.4}, Threshold: {:.4}, Speech: {}",
-            rms,
-            state.baseline_level,
-            state.active_level,
-            current_threshold,
-            raw_speech_decision
-        );
-    }
-
     let is_speech = state.add_speech_decision(raw_speech_decision);
 
     if is_speech {
         if !state.recording {
-            println!(
-                "🎤 Speech detected! Audio: {:.4}, Threshold: {:.4} (Baseline: {:.4}, Active: {:.4})",
-                rms, current_threshold, state.baseline_level, state.active_level
-            );
             state.recording = true;
         }
         state.silence_start = None;
@@ -90,7 +70,6 @@ pub fn process_audio_samples(
                 }
                 if let Some(silence_start) = state.silence_start {
                     if silence_start.elapsed() >= SILENCE_TIMEOUT && !state.stop_requested {
-                        log::debug!("🔇 Silence detected, processing audio...");
                         state.stop_requested = true;
                     }
                 }

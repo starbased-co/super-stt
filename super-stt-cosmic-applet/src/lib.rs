@@ -529,11 +529,6 @@ impl cosmic::Application for SuperSttApplet {
                         }
                     };
 
-                    let old_state = &self.recording_state;
-                    if std::mem::discriminant(old_state) != std::mem::discriminant(&new_state) {
-                        info!("Recording state changed: {old_state:?} -> {new_state:?}");
-                    }
-
                     // Clear visualization data when transitioning away from recording
                     let was_recording = matches!(self.recording_state, RecordingState::Recording);
                     let will_be_recording = matches!(new_state, RecordingState::Recording);
