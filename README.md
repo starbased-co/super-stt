@@ -128,7 +128,6 @@ For detailed security information, see [`docs/SECURITY.md`](docs/SECURITY.md).
 
 **Production Mode** (default):
 - Socket permissions: `0660` (owner + stt group only)
-- Process authentication required for keyboard access
 - Resource limits and rate limiting active
 
 **Development Mode**:

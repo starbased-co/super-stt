@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
-use crate::audio::recorder::DaemonAudioRecorder;
+
 use crate::daemon::types::SuperSTTDaemon;
-use crate::output::keyboard::KeyboardSimulator;
-use crate::output::preview_typing::PreviewTyper;
+use crate::output::keyboard::Simulator;
 use crate::services::dbus::ListeningEvent;
+use crate::{audio::recorder::DaemonAudioRecorder, output::preview};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use enigo::{Enigo, Settings};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use super_stt_shared::models::protocol::DaemonResponse;
-use tokio::net::UnixStream;
-
-const ERASE_BATCH_SIZE: usize = 20;
 
 /// Context for preview session cleanup
 struct PreviewContext {
@@ -23,45 +21,22 @@ struct PreviewContext {
 }
 
 impl SuperSTTDaemon {
-    /// Handle record command with process authentication for write mode
-    pub async fn handle_record_with_auth(
-        &self,
-        client_id: String,
-        write_mode: bool,
-        stream: Option<&UnixStream>,
-    ) -> DaemonResponse {
-        info!("Handling record command, write_mode: {write_mode}, client: {client_id}");
-
-        // Check write permission if write_mode is requested
-        if write_mode {
-            if let Some(stream) = stream {
-                if !self.process_auth.verify_write_permission(stream) {
-                    warn!("Write mode denied - client process not verified: {client_id}");
-                    return DaemonResponse::error(
-                        "Write mode access denied. Only the official stt client can use keyboard injection.",
-                    );
-                }
-            } else {
-                warn!("Write mode denied - no stream available for verification");
-                return DaemonResponse::error(
-                    "Write mode access denied. Stream authentication required.",
-                );
-            }
-        }
-
-        // Proceed with the actual recording
-        self.handle_record_internal(client_id, write_mode).await
-    }
-
     /// Handle record command - direct recording in daemon (legacy method)
-    pub async fn handle_record(&self, client_id: String, write_mode: bool) -> DaemonResponse {
-        self.handle_record_internal(client_id, write_mode).await
+    pub async fn handle_record(
+        &self,
+        keyboard_simulator: &mut Simulator,
+        write_mode: bool,
+    ) -> DaemonResponse {
+        self.handle_record_internal(keyboard_simulator, write_mode)
+            .await
     }
 
     /// Internal record handling implementation
-    async fn handle_record_internal(&self, _client_id: String, write_mode: bool) -> DaemonResponse {
-        info!("Handling record command, write_mode: {write_mode}");
-
+    pub async fn handle_record_internal(
+        &self,
+        keyboard_simulator: &mut Simulator,
+        write_mode: bool,
+    ) -> DaemonResponse {
         // Check if already recording - prevent multiple simultaneous recordings
         {
             let is_recording_guard = self.is_recording.read().await;
@@ -74,7 +49,10 @@ impl SuperSTTDaemon {
         }
 
         // Wait for recording to complete and return the transcription
-        match self.record_and_transcribe(write_mode).await {
+        match self
+            .record_and_transcribe(keyboard_simulator, write_mode)
+            .await
+        {
             Ok((transcription, preview_typed_count)) => {
                 if transcription.trim().is_empty() {
                     info!("🎤 Recording completed - No speech detected");
@@ -87,11 +65,8 @@ impl SuperSTTDaemon {
                     // Handle delete preview and final text typing if write_mode is true
                     if write_mode {
                         // Perform erase + final typing in a single input session to avoid compositor races
-                        if let Err(e) = KeyboardSimulator::replace_preview_and_type(
-                            preview_typed_count,
-                            &transcription,
-                        )
-                        .await
+                        if let Err(e) = keyboard_simulator
+                            .replace_preview_and_type(preview_typed_count, &transcription)
                         {
                             warn!("Failed to erase+type final transcription: {e}");
                         }
@@ -119,12 +94,21 @@ impl SuperSTTDaemon {
     /// # Panics
     ///
     /// Panics if internal locks (e.g., audio theme or buffers) are poisoned.
-    pub async fn record_and_transcribe(&self, write_mode: bool) -> Result<(String, usize)> {
-        self.record_and_transcribe_impl(write_mode).await
+    pub async fn record_and_transcribe(
+        &self,
+        keyboard_simulator: &mut Simulator,
+        write_mode: bool,
+    ) -> Result<(String, usize)> {
+        self.record_and_transcribe_impl(keyboard_simulator, write_mode)
+            .await
     }
 
     /// Internal implementation split out to reduce function size
-    async fn record_and_transcribe_impl(&self, write_mode: bool) -> Result<(String, usize)> {
+    async fn record_and_transcribe_impl(
+        &self,
+        keyboard_simulator: &mut Simulator,
+        write_mode: bool,
+    ) -> Result<(String, usize)> {
         info!("Starting direct audio recording in daemon");
 
         // Set up recording state and create recorder
@@ -157,7 +141,7 @@ impl SuperSTTDaemon {
 
         // Transcribe audio with spinner if needed
         let transcription_result = self
-            .transcribe_with_spinner(&audio_data, write_mode)
+            .transcribe_with_spinner(keyboard_simulator, &audio_data, write_mode)
             .await?;
 
         // Finalize recording session and return result
@@ -235,20 +219,32 @@ impl SuperSTTDaemon {
                     let cancel_flag = std::sync::Arc::clone(&preview_cancel);
                     let typed_counter = std::sync::Arc::clone(&preview_typed_count);
                     preview_typer = Some(tokio::spawn(async move {
-                        use enigo::{Direction, Enigo, Key, Keyboard, Settings};
                         let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
                             return;
                         };
                         let mut last = String::new();
                         let mut actually_typed = String::new(); // Track what we actually typed
+                        let mut preview_state = preview::State::default(); // Track preview state
+                        let cancellation_token = tokio_util::sync::CancellationToken::new();
                         let mut last_update_time = std::time::Instant::now();
 
                         while !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            // Cancel the token if the flag is set
+                            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                cancellation_token.cancel();
+                                break;
+                            }
                             let msg = tokio::select! {
                                 res = rx.recv() => res,
                                 () = tokio::time::sleep(std::time::Duration::from_millis(50)) => continue,
                             };
                             let Ok(new_text) = msg else { break };
+
+                            // Check cancel flag again after receiving message (race condition protection)
+                            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                debug!("Ignoring late preview update - recording stopped");
+                                break;
+                            }
 
                             // Skip duplicate updates (same text received within 100ms)
                             if new_text == last
@@ -266,68 +262,15 @@ impl SuperSTTDaemon {
                                 actually_typed.chars().take(30).collect::<String>()
                             );
 
-                            let should_replace =
-                                PreviewTyper::should_replace_preview(&actually_typed, &new_text);
-
-                            if should_replace {
-                                // Significant change detected - replace what we typed
-                                let chars_to_erase = actually_typed.chars().count();
-                                info!(
-                                    "Preview correction needed: erasing {chars_to_erase} chars and retyping"
-                                );
-
-                                // Erase in batches
-                                let mut remaining = chars_to_erase;
-                                while remaining > 0 {
-                                    let batch_size = remaining.min(ERASE_BATCH_SIZE);
-                                    for _ in 0..batch_size {
-                                        let _ = enigo.key(Key::Backspace, Direction::Click);
-                                        std::thread::sleep(std::time::Duration::from_millis(1));
-                                    }
-                                    remaining -= batch_size;
-                                    if remaining > 0 {
-                                        std::thread::sleep(std::time::Duration::from_millis(10));
-                                    }
-                                }
-
-                                // Type the new text
-                                let _ = enigo.text(&new_text);
-                                actually_typed.clone_from(&new_text);
-
-                                typed_counter.store(
-                                    actually_typed.chars().count(),
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
-
-                                info!(
-                                    "Preview replaced with: '{}'",
-                                    new_text.chars().take(40).collect::<String>()
-                                );
-                            } else if new_text.starts_with(&actually_typed)
-                                && new_text.len() > actually_typed.len()
-                            {
-                                // Perfect extension case: new text exactly extends what we typed
-                                PreviewTyper::handle_perfect_extension(
-                                    &mut enigo,
-                                    &new_text,
-                                    &mut actually_typed,
-                                    &typed_counter,
-                                );
-                            } else if new_text.len() > actually_typed.len()
-                                && actually_typed.len() < 50
-                            {
-                                // For shorter typed text, try smart append based on word overlap
-                                PreviewTyper::handle_smart_append(
-                                    &mut enigo,
-                                    &new_text,
-                                    &mut actually_typed,
-                                    &typed_counter,
-                                );
-                            } else {
-                                debug!(
-                                    "Preview update ignored - incompatible or no clear extension"
-                                );
-                            }
+                            // Use unified preview approach
+                            preview::Typer::update_preview(
+                                &mut enigo,
+                                &new_text,
+                                &mut actually_typed,
+                                &typed_counter,
+                                &mut preview_state,
+                                &cancellation_token,
+                            );
 
                             last = new_text;
                             last_update_time = std::time::Instant::now();
@@ -425,17 +368,13 @@ impl SuperSTTDaemon {
             }
         }
 
-        info!(
-            "Recording complete, processing {} samples",
-            audio_data.len()
-        );
-
         Ok(audio_data)
     }
 
     /// Transcribe audio with spinner if needed
     async fn transcribe_with_spinner(
         &self,
+        keyboard_simulator: &mut Simulator,
         audio_data: &[f32],
         write_mode: bool,
     ) -> Result<String> {
@@ -538,7 +477,7 @@ impl SuperSTTDaemon {
                 .load(std::sync::atomic::Ordering::Relaxed)
                 .min(3);
             if leftover > 0 {
-                let _ = KeyboardSimulator::backspace_n(leftover).await;
+                keyboard_simulator.backspace_n(leftover)?;
                 visible_temp_chars.store(0, std::sync::atomic::Ordering::Relaxed);
             }
         }
@@ -571,15 +510,5 @@ impl SuperSTTDaemon {
                 warn!("Failed to emit D-Bus listening_stopped signal: {e}");
             }
         }
-    }
-
-    /// Type text using keyboard simulation
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if keyboard input cannot be simulated or
-    /// if the typing task fails to execute.
-    pub async fn type_text(&self, text: &str) -> Result<()> {
-        KeyboardSimulator::type_text(text).await
     }
 }

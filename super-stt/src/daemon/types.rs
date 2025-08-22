@@ -124,10 +124,14 @@ impl SuperSTTDaemon {
 
         // Initialize model storage
         let model = Arc::new(tokio::sync::RwLock::new(None));
+        let model_type = Arc::new(tokio::sync::RwLock::new(Some(
+            config.transcription.preferred_model,
+        )));
 
         // Initialize other managers
         let realtime_manager = Arc::new(RealTimeTranscriptionManager::new(
             Arc::clone(&model),
+            Arc::clone(&model_type),
             Arc::clone(&notification_manager),
             Arc::clone(&audio_processor),
         ));
@@ -237,26 +241,27 @@ impl SuperSTTDaemon {
                 changed = true;
             }
         }
-        if let Some(theme) = audio_theme_override {
-            if config.audio.theme != theme {
-                info!(
-                    "CLI override: audio theme {:?} -> {:?}",
-                    config.audio.theme, theme
-                );
-                config.audio.theme = theme;
-                changed = true;
-            }
+        if let Some(theme) = audio_theme_override
+            && config.audio.theme != theme
+        {
+            info!(
+                "CLI override: audio theme {:?} -> {:?}",
+                config.audio.theme, theme
+            );
+            config.audio.theme = theme;
+            changed = true;
         }
-        if let Some(model) = stt_model_override {
-            if config.transcription.preferred_model != model {
-                info!(
-                    "CLI override: model {:?} -> {:?}",
-                    config.transcription.preferred_model, model
-                );
-                config.transcription.preferred_model = model;
-                changed = true;
-            }
+        if let Some(model) = stt_model_override
+            && config.transcription.preferred_model != model
+        {
+            info!(
+                "CLI override: model {:?} -> {:?}",
+                config.transcription.preferred_model, model
+            );
+            config.transcription.preferred_model = model;
+            changed = true;
         }
+
         changed
     }
 

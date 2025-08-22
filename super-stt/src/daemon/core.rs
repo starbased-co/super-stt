@@ -1,21 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::daemon::types::SuperSTTDaemon;
+use crate::{daemon::types::SuperSTTDaemon, output::keyboard::Simulator};
 use super_stt_shared::models::protocol::{Command, DaemonRequest, DaemonResponse};
-use tokio::net::UnixStream;
 
 impl SuperSTTDaemon {
     /// Main command handler - routes commands to appropriate handlers
     pub async fn handle_command(&self, request: DaemonRequest) -> DaemonResponse {
-        self.handle_command_with_stream(request, None).await
-    }
+        let mut keyboard_simulator = Simulator::default();
 
-    /// Command handler that can access the client stream for authentication
-    pub async fn handle_command_with_stream(
-        &self,
-        request: DaemonRequest,
-        stream: Option<&UnixStream>,
-    ) -> DaemonResponse {
         // Track connection if client_id is present
         if let Some(client_id) = &request.client_id {
             self.update_client_connection(client_id.clone()).await;
@@ -74,11 +66,8 @@ impl SuperSTTDaemon {
                 self.handle_realtime_audio(client_id, audio_data, sample_rate)
                     .await
             }
-            Command::Record {
-                client_id,
-                write_mode,
-            } => {
-                self.handle_record_with_auth(client_id, write_mode, stream)
+            Command::Record { write_mode } => {
+                self.handle_record_internal(&mut keyboard_simulator, write_mode)
                     .await
             }
             Command::SetAudioTheme { theme } => self.handle_set_audio_theme(theme),
