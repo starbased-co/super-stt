@@ -218,7 +218,7 @@ impl cosmic::Application for AppModel {
     }
 
     /// Elements to pack at the start of the header bar.
-    fn header_start(&self) -> Vec<Element<Self::Message>> {
+    fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
         let menu_bar = menu::bar(vec![menu::Tree::with_children(
             menu::root("View").apply(Element::from),
             menu::items(
@@ -241,7 +241,7 @@ impl cosmic::Application for AppModel {
     }
 
     /// Display a context drawer if the context page is requested.
-    fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<Self::Message>> {
+    fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Self::Message>> {
         if !self.core.window.show_context {
             return None;
         }
@@ -259,7 +259,7 @@ impl cosmic::Application for AppModel {
     ///
     /// Application events will be processed through the view. Any messages emitted by
     /// events received by widgets will be passed to the update method.
-    fn view(&self) -> Element<Self::Message> {
+    fn view(&self) -> Element<'_, Self::Message> {
         // Force Connection page when daemon is not connected
         if self.daemon_status != DaemonStatus::Connected {
             return views::connection::page(
@@ -1001,15 +1001,15 @@ impl AppModel {
                 }
 
                 // If we were tracking a download and models loaded successfully, clear download state
-                if self.download_state == DownloadState::Active && self.download_progress.is_some()
+                if self.download_state == DownloadState::Active
+                    && self.download_progress.is_some()
+                    && let Some(progress) = &self.download_progress
+                    && progress.status == "completed"
                 {
-                    if let Some(progress) = &self.download_progress {
-                        if progress.status == "completed" {
-                            self.download_progress = None;
-                            self.download_state = DownloadState::Idle;
-                        }
-                    }
+                    self.download_progress = None;
+                    self.download_state = DownloadState::Idle;
                 }
+
                 Task::none()
             }
 

@@ -422,10 +422,11 @@ impl NotificationManager {
         }
 
         // Filter by event types if provided
-        if let Some(types) = event_types {
-            if !types.is_empty() && !types.contains(&"*".to_string()) {
-                events.retain(|event| types.contains(&event.event_type));
-            }
+        if let Some(types) = event_types
+            && !types.is_empty()
+            && !types.contains(&"*".to_string())
+        {
+            events.retain(|event| types.contains(&event.event_type));
         }
 
         // Sort by timestamp (newest first)
