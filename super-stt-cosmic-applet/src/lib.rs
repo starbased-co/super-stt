@@ -26,9 +26,9 @@ use std::{path::PathBuf, rc::Rc};
 use tokio::net::UdpSocket;
 
 // Cache icon bytes to avoid allocation on every render
-static NORMAL_ICON: &[u8] = include_bytes!("../data/icons/scalable/app/super-stt-icon.svg");
-static TRANSPARENT_ICON: &[u8] = include_bytes!("../data/icons/scalable/app/transparent-icon.svg");
-static ERROR_ICON: &[u8] = include_bytes!("../data/icons/scalable/app/error-icon.svg");
+static NORMAL_ICON: &[u8] = include_bytes!("../resources/assets/super-stt-icon.svg");
+static TRANSPARENT_ICON: &[u8] = include_bytes!("../resources/assets/transparent-icon.svg");
+static ERROR_ICON: &[u8] = include_bytes!("../resources/assets/error-icon.svg");
 
 use crate::models::state::{DaemonConnectionState, RecordingState};
 use crate::ui::components::sound_visualization::VisualizationComponent;
@@ -103,7 +103,7 @@ impl cosmic::Application for SuperSttApplet {
     type Message = Message;
     type Executor = cosmic::SingleThreadExecutor;
     type Flags = VisualizationSide;
-    const APP_ID: &'static str = "com.github.jorge-menjivar.super-stt-cosmic-applet";
+    const APP_ID: &'static str = "ai.menjivar.super-stt-cosmic-applet";
 
     fn init(
         core: cosmic::app::Core,

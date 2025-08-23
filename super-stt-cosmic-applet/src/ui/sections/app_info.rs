@@ -9,9 +9,9 @@ use cosmic::{
 
 // Cache GitHub icon bytes to avoid allocation on every render
 static GITHUB_ICON_DARK: &[u8] =
-    include_bytes!("../../../data/icons/scalable/github-mark/github-mark-white.svg");
+    include_bytes!("../../../resources/assets/github-mark/github-mark-white.svg");
 static GITHUB_ICON_LIGHT: &[u8] =
-    include_bytes!("../../../data/icons/scalable/github-mark/github-mark.svg");
+    include_bytes!("../../../resources/assets/github-mark/github-mark.svg");
 
 pub fn create_app_info_section() -> Element<'static, Message> {
     let current_theme = theme::active();
