@@ -8,7 +8,8 @@ use cosmic::{Element, cosmic_theme, theme};
 
 use crate::ui::messages::Message;
 
-const APP_ICON: &[u8] = include_bytes!("../../../resources/icons/hicolor/scalable/apps/icon.svg");
+const APP_ICON: &[u8] =
+    include_bytes!("../../../resources/icons/hicolor/scalable/apps/super-stt-app.svg");
 pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// About page view

@@ -5,14 +5,14 @@ cosmic_name := 'cosmic-ext'
 applet_name := 'super-stt-cosmic-applet'
 
 # Applet
-applet_full_desktop_file_name := 'com.github.jorge-menjivar.super_stt_cosmic_applet-full.desktop'
-applet_left_desktop_file_name := 'com.github.jorge-menjivar.super_stt_cosmic_applet-left.desktop'
-applet_right_desktop_file_name := 'com.github.jorge-menjivar.super_stt_cosmic_applet-right.desktop'
-applet_icon_name := 'com.github.jorge-menjivar.super_stt_cosmic_applet.svg'
+applet_full_desktop_file_name := 'super-stt-cosmic-applet-full.desktop'
+applet_left_desktop_file_name := 'super-stt-cosmic-applet-left.desktop'
+applet_right_desktop_file_name := 'super-stt-cosmic-applet-right.desktop'
 
 # Installation paths
 home_dir := env_var('HOME')
 user_bin_dir := home_dir / '.local' / 'bin'
+user_prefix := home_dir / '.local'
 system_bin_dir := '/usr/local/bin'
 user_systemd_dir := home_dir / '.config' / 'systemd' / 'user'
 run_dir := env_var('XDG_RUNTIME_DIR') / 'stt'
@@ -33,22 +33,21 @@ applet_dst := user_bin_dir / applet_name
 wrapper_dst := user_bin_dir / wrapper_name
 
 # App files
-app_desktop_file_name := 'com.github.jorge-menjivar.super-stt-app.desktop'
-app_icon_name := 'com.github.jorge-menjivar.super-stt-app.svg'
+app_desktop_file_name := 'super-stt-app.desktop'
 app_desktop_file_src := 'super-stt-app' / 'resources' / 'app.desktop'
-app_icon_src := 'super-stt-cosmic-applet' / 'data' / 'icons' / 'scalable' / 'app' / 'super-stt-icon.svg'
+app_icon_src := 'super-stt-app' / 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'super-stt-app.svg'
 app_desktop_file_dst := user_desktop_dir / app_desktop_file_name
-app_icon_dst := user_icons_dir / app_icon_name
+app_icon_dst := user_icons_dir / 'super-stt-app.svg'
 
-# Other files paths
-applet_full_desktop_file_src := 'super-stt-cosmic-applet' / 'data' / applet_full_desktop_file_name
-applet_left_desktop_file_src := 'super-stt-cosmic-applet' / 'data' / applet_left_desktop_file_name
-applet_right_desktop_file_src := 'super-stt-cosmic-applet' / 'data' / applet_right_desktop_file_name
-applet_icon_src := 'super-stt-cosmic-applet' / 'data' / 'icons' / 'scalable' / 'app' / applet_icon_name
+# Applet files
+applet_full_desktop_file_src := 'super-stt-cosmic-applet' / 'resources' / applet_full_desktop_file_name
+applet_left_desktop_file_src := 'super-stt-cosmic-applet' / 'resources' / applet_left_desktop_file_name
+applet_right_desktop_file_src := 'super-stt-cosmic-applet' / 'resources' / applet_right_desktop_file_name
+applet_icon_src := 'super-stt-cosmic-applet' / 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'super-stt-cosmic-applet.svg'
 applet_full_desktop_file_dst := user_desktop_dir / applet_full_desktop_file_name
 applet_left_desktop_file_dst := user_desktop_dir / applet_left_desktop_file_name
 applet_right_desktop_file_dst := user_desktop_dir / applet_right_desktop_file_name
-applet_icon_dst := user_icons_dir / applet_icon_name
+applet_icon_dst := user_icons_dir / 'super-stt-cosmic-applet.svg'
 
 # Service file
 service_file := daemon_name + '.service'
@@ -85,7 +84,7 @@ build-vendored *args: vendor-extract
 
 # Runs a clippy check
 check *args:
-    cargo clippy --all-features {{args}} -- -W clippy::pedantic
+    cargo clippy --all-features --workspace {{args}} -- -W clippy::pedantic -D warnings
 
 # Runs a clippy check with JSON message format
 check-json: (check '--message-format=json')
@@ -337,42 +336,14 @@ install-daemon *args:
     mkdir -p {{log_dir}}
     mkdir -p {{user_systemd_dir}}
 
-    # Create user systemd service file
-    echo "Creating user systemd service file..."
-    cat > {{service_dst}} << 'EOF'
-    [Unit]
-    Description=Super STT Daemon - Speech-to-text service
-    Documentation=https://github.com/jorge-menjivar/super-stt
-    After=pipewire.service pulseaudio.service graphical-session.target
-    Requires=graphical-session.target
-
-    [Service]
-    Type=simple
-    ExecStartPre=/bin/sh -c 'while [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; do sleep 0.1; done'
-    ExecStart={{wrapper_dst}} --socket {{run_dir}}/super-stt.sock
-    ExecReload=/bin/kill -HUP $MAINPID
-    Restart=always
-    RestartSec=5
-    TimeoutStartSec=60
-    TimeoutStopSec=10
-
-    # Environment
-    Environment=CUDA_PATH=/opt/cuda
-    Environment=LD_LIBRARY_PATH=/opt/cuda/lib64:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
-
-    # Output to user journal
-    StandardOutput=journal
-    StandardError=journal
-    SyslogIdentifier=stt-daemon
-
-    [Install]
-    WantedBy=default.target
-    EOF
+    # Copy the service file from the repo
+    echo "Installing user systemd service file..."
+    cp super-stt/systemd/super-stt.service {{service_dst}}
 
     # Add model parameter to ExecStart if specified
     if [[ -n "$model" ]]; then
         echo "Configuring daemon to use model: $model"
-        sed -i "s|--socket {{run_dir}}/super-stt.sock|--socket {{run_dir}}/super-stt.sock --model $model|" {{service_dst}}
+        sed -i "s|--socket %t/stt/super-stt.sock|--socket %t/stt/super-stt.sock --model $model|" {{service_dst}}
     fi
 
     # Create wrapper script for automatic group switching
@@ -383,6 +354,56 @@ install-daemon *args:
     echo '' >> {{wrapper_dst}}
     echo 'exec sg stt -c "{{daemon_dst}} $*"' >> {{wrapper_dst}}
     chmod +x {{wrapper_dst}}
+
+    # Setup COSMIC keyboard shortcut if available
+    # Setup COSMIC keyboard shortcut
+    if command -v cosmic-panel &> /dev/null; then
+        COSMIC_SHORTCUTS_DIR="$HOME/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1"
+        COSMIC_SHORTCUTS_FILE="$COSMIC_SHORTCUTS_DIR/custom"
+
+        echo -n "Add COSMIC keyboard shortcut (Super+Space)? [Y/n]: "
+        read -r add_shortcut
+
+        if [[ ! "$add_shortcut" =~ ^[Nn]$ ]]; then
+            mkdir -p "$COSMIC_SHORTCUTS_DIR"
+            stt_command="{{user_bin_dir}}/stt record --write"
+
+            if [ -f "$COSMIC_SHORTCUTS_FILE" ] && [ -s "$COSMIC_SHORTCUTS_FILE" ]; then
+                if ! grep -q "Super STT" "$COSMIC_SHORTCUTS_FILE"; then
+                    if ! (grep -q 'key: "space"' "$COSMIC_SHORTCUTS_FILE" && grep -A5 -B5 'key: "space"' "$COSMIC_SHORTCUTS_FILE" | grep -q 'Super'); then
+                        cp "$COSMIC_SHORTCUTS_FILE" "$COSMIC_SHORTCUTS_FILE.backup"
+                        temp_file=$(mktemp)
+                        if grep -q '^{}$' "$COSMIC_SHORTCUTS_FILE"; then
+                            echo '{' > "$temp_file"
+                        else
+                            head -n -1 "$COSMIC_SHORTCUTS_FILE" > "$temp_file"
+                        fi
+                        echo '    (' >> "$temp_file"
+                        echo '        modifiers: [' >> "$temp_file"
+                        echo '            Super,' >> "$temp_file"
+                        echo '        ],' >> "$temp_file"
+                        echo '        key: "space",' >> "$temp_file"
+                        echo '        description: Some("Super STT"),' >> "$temp_file"
+                        echo "    ): Spawn(\"$stt_command\")," >> "$temp_file"
+                        echo '}' >> "$temp_file"
+                        mv "$temp_file" "$COSMIC_SHORTCUTS_FILE"
+                        rm -f "$COSMIC_SHORTCUTS_FILE.backup"
+                        rm -f "$COSMIC_SHORTCUTS_FILE.backup"
+                    fi
+                fi
+            else
+                echo '{' > "$COSMIC_SHORTCUTS_FILE"
+                echo '    (' >> "$COSMIC_SHORTCUTS_FILE"
+                echo '        modifiers: [' >> "$COSMIC_SHORTCUTS_FILE"
+                echo '            Super,' >> "$COSMIC_SHORTCUTS_FILE"
+                echo '        ],' >> "$COSMIC_SHORTCUTS_FILE"
+                echo '        key: "space",' >> "$COSMIC_SHORTCUTS_FILE"
+                echo '        description: Some("Super STT"),' >> "$COSMIC_SHORTCUTS_FILE"
+                echo "    ): Spawn(\"$stt_command\")," >> "$COSMIC_SHORTCUTS_FILE"
+                echo '}' >> "$COSMIC_SHORTCUTS_FILE"
+            fi
+        fi
+    fi || true
 
     # Update PATH in user's shell config
     shell_config="$HOME/.bashrc"
@@ -396,8 +417,8 @@ install-daemon *args:
         echo "⚠️  Restart your shell or run: source $shell_config"
     fi
 
-    echo "✓ Super STT installed to {{app_dst}}"
-    echo "✓ Wrapper script created at {{wrapper_dst}}
+    echo "✓ Super STT installed to {{daemon_dst}}"
+    echo "✓ Wrapper script created at {{wrapper_dst}}"
     echo "✓ Convenience shortcut 'stt' created"
     echo ""
     echo "🚀 Ready to use!"
@@ -428,6 +449,101 @@ install *args:
         exit 1
     fi
 
+# Configure COSMIC keyboard shortcut for Super STT
+setup-cosmic-shortcut:
+    #!/usr/bin/env bash
+    # Check if we're on COSMIC desktop
+    if ! command -v cosmic-panel &> /dev/null; then
+        echo "COSMIC desktop not detected"
+        exit 0
+    fi
+
+    COSMIC_SHORTCUTS_DIR="$HOME/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1"
+    COSMIC_SHORTCUTS_FILE="$COSMIC_SHORTCUTS_DIR/custom"
+
+    # Ask user if they want to add the shortcut
+    echo -n "Add keyboard shortcut (Super+Space) for Super STT? [Y/n]: "
+    read -r add_shortcut
+
+    if [[ "$add_shortcut" =~ ^[Nn]$ ]]; then
+        exit 0
+    fi
+
+    # Create the shortcuts directory if it doesn't exist
+    mkdir -p "$COSMIC_SHORTCUTS_DIR"
+
+    # Use the full path to the stt wrapper for reliability
+    stt_command="{{user_bin_dir}}/stt record --write"
+
+    # Check if shortcuts file exists and has content
+    if [ -f "$COSMIC_SHORTCUTS_FILE" ] && [ -s "$COSMIC_SHORTCUTS_FILE" ]; then
+        # File exists with content, check if our shortcut is already there
+        if grep -q "Super STT" "$COSMIC_SHORTCUTS_FILE"; then
+            exit 0
+        fi
+
+        # Check if Super+Space is already used
+        if grep -q 'key: "space"' "$COSMIC_SHORTCUTS_FILE" && grep -A5 -B5 'key: "space"' "$COSMIC_SHORTCUTS_FILE" | grep -q 'Super'; then
+            echo "Super+Space already in use"
+            exit 0
+        fi
+
+        # Create a backup
+        cp "$COSMIC_SHORTCUTS_FILE" "$COSMIC_SHORTCUTS_FILE.backup"
+
+        # Create a temporary file with the new shortcut entry
+        temp_file=$(mktemp)
+
+        # Check if the file is empty (just {}) and handle accordingly
+        if grep -q '^{}$' "$COSMIC_SHORTCUTS_FILE"; then
+            # File is empty, replace entirely
+            echo '{' > "$temp_file"
+            echo '    (' >> "$temp_file"
+            echo '        modifiers: [' >> "$temp_file"
+            echo '            Super,' >> "$temp_file"
+            echo '        ],' >> "$temp_file"
+            echo '        key: "space",' >> "$temp_file"
+            echo '        description: Some("Super STT"),' >> "$temp_file"
+            echo "    ): Spawn(\"$stt_command\")," >> "$temp_file"
+            echo '}' >> "$temp_file"
+        else
+            # File has content, remove the closing brace and add our shortcut
+            head -n -1 "$COSMIC_SHORTCUTS_FILE" > "$temp_file"
+            echo '    (' >> "$temp_file"
+            echo '        modifiers: [' >> "$temp_file"
+            echo '            Super,' >> "$temp_file"
+            echo '        ],' >> "$temp_file"
+            echo '        key: "space",' >> "$temp_file"
+            echo '        description: Some("Super STT"),' >> "$temp_file"
+            echo "    ): Spawn(\"$stt_command\")," >> "$temp_file"
+            echo '}' >> "$temp_file"
+        fi
+
+        # Replace the original file
+        mv "$temp_file" "$COSMIC_SHORTCUTS_FILE"
+
+        # Verify the file is valid by checking it has proper structure
+        if ! grep -q '^{' "$COSMIC_SHORTCUTS_FILE" || ! grep -q '^}' "$COSMIC_SHORTCUTS_FILE"; then
+            mv "$COSMIC_SHORTCUTS_FILE.backup" "$COSMIC_SHORTCUTS_FILE"
+            exit 1
+        fi
+
+        # Remove backup if successful
+        rm -f "$COSMIC_SHORTCUTS_FILE.backup"
+    else
+
+        echo '{' > "$COSMIC_SHORTCUTS_FILE"
+        echo '    (' >> "$COSMIC_SHORTCUTS_FILE"
+        echo '        modifiers: [' >> "$COSMIC_SHORTCUTS_FILE"
+        echo '            Super,' >> "$COSMIC_SHORTCUTS_FILE"
+        echo '        ],' >> "$COSMIC_SHORTCUTS_FILE"
+        echo '        key: "space",' >> "$COSMIC_SHORTCUTS_FILE"
+        echo '        description: Some("Super STT"),' >> "$COSMIC_SHORTCUTS_FILE"
+        echo "    ): Spawn(\"$stt_command\")," >> "$COSMIC_SHORTCUTS_FILE"
+        echo '}' >> "$COSMIC_SHORTCUTS_FILE"
+    fi
+
+
 # Install everything (daemon, app, and COSMIC applet)
 # Usage: just install-all [--cuda|--cudnn] [--model MODEL]
 install-all *args:
@@ -444,6 +560,11 @@ install-all *args:
 
     echo ""
     echo "🎉 Complete Super STT installation finished!"
+    echo ""
+    echo "⚙️  Quick Setup Tips:"
+    echo "-- If you're on COSMIC, the daemon installer already offered to set up Super+Space shortcut"
+    echo "-- For other desktop environments, add a keyboard shortcut for: stt record --write"
+    echo "-- Recommended shortcuts: Super+Space, Ctrl+Alt+S, or F12"
 
 # Uninstall the app
 uninstall-app:

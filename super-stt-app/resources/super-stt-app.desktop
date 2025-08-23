@@ -2,7 +2,7 @@
 Name=Super STT
 Comment=High-performance speech-to-text application
 Type=Application
-Icon=com.github.jorge-menjivar.super-stt-app
+Icon=super-stt-app
 Exec=super-stt-app
 Terminal=false
 StartupNotify=true
