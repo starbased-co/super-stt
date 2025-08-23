@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Build Linux Binaries
+    strategy:
+      matrix:
+        include:
+          # x86_64 builds - CPU only
+          - target: x86_64-unknown-linux-gnu
+            features: ""
+            suffix: cpu
+            runner: ubuntu-latest
+            cuda_cap: ""
+
+          # x86_64 CUDA builds with different compute capabilities
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda-sm75
+            runner: ubuntu-latest
+            cuda_cap: "75" # RTX 2080, T4, Quadro RTX series
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda-sm80
+            runner: ubuntu-latest
+            cuda_cap: "80" # A100, A30
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda-sm86
+            runner: ubuntu-latest
+            cuda_cap: "86" # RTX 3060-3090, A40, RTX A2000-A6000
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda-sm89
+            runner: ubuntu-latest
+            cuda_cap: "89" # RTX 4050-4090, RTX Ada series, L4, L40
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda-sm90
+            runner: ubuntu-latest
+            cuda_cap: "90" # H100, H200, GH200
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda-sm100
+            runner: ubuntu-latest
+            cuda_cap: "100" # B200, GB200
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda"
+            suffix: cuda-sm120
+            runner: ubuntu-latest
+            cuda_cap: "120" # RTX 5050-5090, RTX PRO Blackwell series
+
+          # x86_64 CUDA+cuDNN builds with different compute capabilities
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn-sm75
+            runner: ubuntu-latest
+            cuda_cap: "75" # RTX 2080, T4, Quadro RTX series
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn-sm80
+            runner: ubuntu-latest
+            cuda_cap: "80" # A100, A30
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn-sm86
+            runner: ubuntu-latest
+            cuda_cap: "86" # RTX 3060-3090, A40, RTX A2000-A6000
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn-sm89
+            runner: ubuntu-latest
+            cuda_cap: "89" # RTX 4050-4090, RTX Ada series, L4, L40
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn-sm90
+            runner: ubuntu-latest
+            cuda_cap: "90" # H100, H200, GH200
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn-sm100
+            runner: ubuntu-latest
+            cuda_cap: "100" # B200, GB200
+          - target: x86_64-unknown-linux-gnu
+            features: "cuda,cudnn"
+            suffix: cuda-cudnn-sm120
+            runner: ubuntu-latest
+            cuda_cap: "120" # RTX 5050-5090, RTX PRO Blackwell series
+
+          # aarch64 builds - CPU only (CUDA not commonly used on ARM)
+          - target: aarch64-unknown-linux-gnu
+            features: ""
+            suffix: cpu
+            runner: ubuntu-latest
+            cuda_cap: ""
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cross (for cross-compilation)
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build daemon binary
+        run: |
+          CUDA_COMPUTE_CAP=${{ matrix.cuda_cap }} cross build --release --target ${{ matrix.target }} --bin super-stt --features "${{ matrix.features }}"
+
+      - name: Build app binary
+        run: |
+          cross build --release --target ${{ matrix.target }} --bin super-stt-app
+
+      - name: Build applet binary
+        run: |
+          cross build --release --target ${{ matrix.target }} --bin super-stt-cosmic-applet
+
+      - name: Create tarball
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/super-stt dist/
+          cp target/${{ matrix.target }}/release/super-stt-app dist/
+          cp target/${{ matrix.target }}/release/super-stt-cosmic-applet dist/
+
+          # Include systemd service files
+          mkdir -p dist/systemd
+          if [ -f super-stt/systemd/super-stt.service ]; then
+            cp super-stt/systemd/super-stt.service dist/systemd/
+          fi
+
+          # Include desktop app resources
+          if [ -d super-stt-app/resources ]; then
+            mkdir -p dist/resources/app
+            cp -r super-stt-app/resources/* dist/resources/app/
+          fi
+
+          # Include COSMIC applet resources
+          if [ -d super-stt-cosmic-applet/resources ]; then
+            mkdir -p dist/resources/cosmic-applet
+            cp -r super-stt-cosmic-applet/resources/* dist/resources/cosmic-applet/
+          fi
+
+          # Create tarball with architecture and feature suffix
+          tar -czf super-stt-${{ matrix.target }}-${{ matrix.suffix }}.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: super-stt-${{ matrix.target }}-${{ matrix.suffix }}
+          path: super-stt-${{ matrix.target }}-${{ matrix.suffix }}.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: build-linux
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

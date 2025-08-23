@@ -23,7 +23,7 @@
     candle-transformers = { git = "https://github.com/huggingface/candle.git", branch = "main" }
     candle-flash-attn   = { git = "https://github.com/huggingface/candle.git", branch = "main" }
 
-    # HuggingFace Hub and tokenizers (for daemon)
+    # Tokenizers (for daemon)
     tokenizers = "0.21.4"
     tekken-rs  = "0.1.1"
 
@@ -103,6 +103,19 @@
 
     # D-Bus integration
     zbus = "5.9.0"
+
+  [workspace.metadata.cross.build]
+    pre-build = [
+      "dpkg --add-architecture $CROSS_DEB_ARCH",
+      "apt-get update && apt-get --assume-yes install git libxkbcommon-dev:$CROSS_DEB_ARCH libwayland-dev:$CROSS_DEB_ARCH libxkbcommon-x11-dev:$CROSS_DEB_ARCH libegl1-mesa-dev:$CROSS_DEB_ARCH libfontconfig1-dev:$CROSS_DEB_ARCH libfreetype6-dev:$CROSS_DEB_ARCH libglib2.0-dev:$CROSS_DEB_ARCH libspeechd-dev:$CROSS_DEB_ARCH libxrandr-dev:$CROSS_DEB_ARCH libxinerama-dev:$CROSS_DEB_ARCH libxcursor-dev:$CROSS_DEB_ARCH libxi-dev:$CROSS_DEB_ARCH libxss-dev:$CROSS_DEB_ARCH libasound2-dev:$CROSS_DEB_ARCH pkg-config libssl-dev:$CROSS_DEB_ARCH",
+    ]
+
+
+    [workspace.metadata.cross.build.env]
+      passthrough = ["CUDA_COMPUTE_CAP"]
+
+  [workspace.metadata.cross.target.x86_64-unknown-linux-gnu]
+    image = "nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04"
 
 [profile.release]
   lto           = true

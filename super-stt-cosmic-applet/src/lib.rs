@@ -26,9 +26,10 @@ use std::{path::PathBuf, rc::Rc};
 use tokio::net::UdpSocket;
 
 // Cache icon bytes to avoid allocation on every render
-static NORMAL_ICON: &[u8] = include_bytes!("../data/icons/scalable/app/super-stt-icon.svg");
-static TRANSPARENT_ICON: &[u8] = include_bytes!("../data/icons/scalable/app/transparent-icon.svg");
-static ERROR_ICON: &[u8] = include_bytes!("../data/icons/scalable/app/error-icon.svg");
+static NORMAL_ICON: &[u8] = include_bytes!("../resources/icons/scalable/app/super-stt-icon.svg");
+static TRANSPARENT_ICON: &[u8] =
+    include_bytes!("../resources/icons/scalable/app/transparent-icon.svg");
+static ERROR_ICON: &[u8] = include_bytes!("../resources/icons/scalable/app/error-icon.svg");
 
 use crate::models::state::{DaemonConnectionState, RecordingState};
 use crate::ui::components::sound_visualization::VisualizationComponent;

@@ -5,9 +5,7 @@
   <project_license>GPL-3</project_license>
   <name>Super Stt App</name>
   <summary>An application for the COSMIC™ desktop</summary>
-  <icon type="remote" width="64" height="64" scale="1">
-    https://github.com/jorge-menjivar/super-stt/raw/main/resources/icons/hicolor/scalable/apps/icon.svg
-  </icon>
+  <icon type="stock">com.github.jorge-menjivar.super-stt-app</icon>
   <url type="vcs-browser">https://github.com/jorge-menjivar/super-stt</url>
   <launchable type="desktop-id">com.github.jorge-menjivar.super-stt-app.desktop</launchable>
   <provides>
@@ -32,4 +30,3 @@
   </keywords>
   <content_rating type="oars-1.1" />
 </component>
-

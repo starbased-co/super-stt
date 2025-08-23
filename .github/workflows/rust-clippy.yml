@@ -32,8 +32,9 @@ jobs:
       - name: Run rust-clippy
         run: cargo clippy
           --all-features
+          --workspace
           --message-format=json
-          -- -W clippy::pedantic
+          -- -W clippy::pedantic -D warnings
           | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
         continue-on-error: true
 
