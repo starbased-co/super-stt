@@ -115,7 +115,7 @@
       passthrough = ["CUDA_COMPUTE_CAP"]
 
   [workspace.metadata.cross.target.x86_64-unknown-linux-gnu]
-    image = "nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04"
+    image = "nvidia/cuda:12.7.0-cudnn-devel-ubuntu22.04"
 
 [profile.release]
   lto           = true
