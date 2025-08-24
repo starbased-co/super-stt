@@ -21,6 +21,9 @@ INSTALL_OPTION="all"
 INTERACTIVE=true
 
 TEMP_DIR=$(mktemp -d)
+
+echo "Temp directory: $TEMP_DIR"
+
 DESKTOP_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons"
 METAINFO_DIR="$HOME/.local/share/metainfo"
@@ -400,7 +403,6 @@ done
 
 # Interactive menu function
 show_menu() {
-    clear
     echo "============================================="
     echo "         Super STT Installation Menu"
     echo "============================================="
@@ -527,7 +529,7 @@ DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$VERSION/$TARBAL
 print_info "Downloading from: $DOWNLOAD_URL"
 
 # Create temporary directory
-trap "rm -rf $TEMP_DIR" EXIT
+# trap "rm -rf $TEMP_DIR" EXIT
 
 # Download the tarball with fallback support
 download_with_fallback() {
