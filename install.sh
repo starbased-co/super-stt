@@ -613,6 +613,8 @@ if [ "$INTERACTIVE" = true ] && [ -t 2 ]; then
     echo "DEBUG: Menu completed, install option: $INSTALL_OPTION" >&2
 fi
 
+echo "Checking for sudo"
+
 # Check if we need sudo and prompt early for daemon installations
 if [ "$INSTALL_OPTION" = "all" ] || [ "$INSTALL_OPTION" = "daemon" ]; then
     echo "DEBUG: Checking sudo access for daemon installation..." >&2
