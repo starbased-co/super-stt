@@ -3,7 +3,20 @@
 # Super STT Installation Script
 # This script downloads and installs the appropriate pre-built binaries
 
+# Force immediate output for debugging piped execution
+exec 2>&1
+
+# Very early debug output
+printf "SCRIPT START: Super STT Installation Script\n" >&2
+
 set -e
+
+# Debug mode for troubleshooting piped installation
+if [ "${DEBUG_INSTALL}" = "1" ]; then
+    set -x
+fi
+
+printf "SCRIPT INITIALIZED: Starting setup...\n" >&2
 
 # Colors for output
 RED='\033[0;31m'
@@ -11,10 +24,14 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+printf "COLORS DEFINED: Color variables set\n" >&2
+
 # Print functions
 print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+printf "FUNCTIONS DEFINED: Print functions loaded\n" >&2
 
 # Detect system architecture
 detect_arch() {
@@ -33,7 +50,7 @@ detect_gpu_compute_cap() {
     fi
 
     # Get GPU name and try to determine compute capability
-    local gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | head -1)
+    local gpu_name=$(timeout 10 nvidia-smi --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | head -1)
 
     if [ -z "$gpu_name" ]; then
         return
@@ -76,8 +93,8 @@ detect_gpu_compute_cap() {
 detect_cuda() {
     if command -v nvidia-smi &> /dev/null; then
         print_info "NVIDIA GPU detected" >&2
-        if nvidia-smi --version &> /dev/null && nvidia-smi | grep -q "CUDA Version"; then
-            CUDA_VERSION=$(nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9.]*\).*/\1/')
+        if timeout 10 nvidia-smi --version &> /dev/null && timeout 10 nvidia-smi | grep -q "CUDA Version"; then
+            CUDA_VERSION=$(timeout 10 nvidia-smi | grep "CUDA Version" | sed 's/.*CUDA Version: \([0-9.]*\).*/\1/')
             print_info "CUDA runtime $CUDA_VERSION detected" >&2
 
             # Detect compute capability
@@ -194,7 +211,7 @@ install_app() {
     # Install desktop file and icons if available
     if [ -d "$temp_dir/resources/app" ]; then
         print_info "Installing desktop integration files..."
-        
+
         # Determine installation paths
         if [[ "$install_prefix" == "/usr"* ]]; then
             # System-wide installation
@@ -279,7 +296,7 @@ install_applet() {
     # Install desktop files and icons if available
     if [ -d "$temp_dir/resources/cosmic-applet" ]; then
         print_info "Installing COSMIC applet integration files..."
-        
+
         # Determine installation paths
         if [[ "$install_prefix" == "/usr"* ]]; then
             # System-wide installation
@@ -523,10 +540,14 @@ show_menu() {
 }
 
 handle_menu() {
+    printf "DEBUG: Entering handle_menu function\n" >&2
     while true; do
+        printf "DEBUG: Showing menu\n" >&2
         show_menu
+        printf "DEBUG: Waiting for user input\n" >&2
         echo -n "Select option [1-4, q] (default: 1): "
         read -r choice
+        printf "DEBUG: User selected: '%s'\n" "$choice" >&2
 
         # Default to option 1 if empty
         if [ -z "$choice" ]; then
@@ -535,18 +556,22 @@ handle_menu() {
 
         case $choice in
             1)
+                printf "DEBUG: Selected option 1 (all)\n" >&2
                 INSTALL_OPTION="all"
                 break
                 ;;
             2)
+                printf "DEBUG: Selected option 2 (daemon)\n" >&2
                 INSTALL_OPTION="daemon"
                 break
                 ;;
             3)
+                printf "DEBUG: Selected option 3 (app)\n" >&2
                 INSTALL_OPTION="app"
                 break
                 ;;
             4)
+                printf "DEBUG: Selected option 4 (applet)\n" >&2
                 if ! command -v cosmic-panel &> /dev/null; then
                     print_warn "COSMIC panel not found - applet not available"
                     sleep 1
@@ -556,51 +581,73 @@ handle_menu() {
                 fi
                 ;;
             q|Q)
+                printf "DEBUG: Selected quit\n" >&2
                 print_info "Installation cancelled"
                 exit 0
                 ;;
             *)
+                printf "DEBUG: Invalid option: '%s'\n" "$choice" >&2
                 print_warn "Invalid option. Please try again."
                 sleep 1
                 ;;
         esac
     done
+    printf "DEBUG: Exiting handle_menu function with INSTALL_OPTION='%s'\n" "$INSTALL_OPTION" >&2
 }
 
 # Show interactive menu if in interactive mode
 # Check if we have a controlling terminal (works better with piped input)
 if [ "$INTERACTIVE" = true ] && [ -t 2 ]; then
-    # Do minimal detection for menu display
+    echo "DEBUG: Starting interactive menu setup..." >&2
+    # Do minimal detection for menu display (avoid CUDA detection here)
+    echo "DEBUG: Detecting architecture for menu..." >&2
     ARCH=$(detect_arch)
-    VARIANT=$(detect_cuda)
+    echo "DEBUG: Setting placeholder variant for menu..." >&2
+    VARIANT="detecting..."  # Placeholder for menu display
+    echo "DEBUG: Starting menu interaction..." >&2
 
     # Redirect stdin from the controlling terminal for the menu
     exec < /dev/tty
     handle_menu
     clear
+    echo "DEBUG: Menu completed, install option: $INSTALL_OPTION" >&2
 fi
 
 # Check if we need sudo and prompt early for daemon installations
 if [ "$INSTALL_OPTION" = "all" ] || [ "$INSTALL_OPTION" = "daemon" ]; then
+    echo "DEBUG: Checking sudo access for daemon installation..." >&2
     print_info "Daemon installation requires sudo to create the stt group"
     print_info "You will be prompted for your password..."
     # Test sudo access early
-    if ! sudo -v; then
-        print_error "Sudo access required for daemon installation"
-        exit 1
+    if [ -t 2 ]; then
+        # Terminal available, test sudo normally
+        if ! sudo -v; then
+            print_error "Sudo access required for daemon installation"
+            exit 1
+        fi
+    else
+        # Piped input, redirect sudo from terminal
+        if ! sudo -v < /dev/tty; then
+            print_error "Sudo access required for daemon installation"
+            exit 1
+        fi
     fi
+    echo "DEBUG: Sudo access confirmed" >&2
 fi
 
 # Detect what we need based on install option
+print_info "Starting architecture detection..."
 ARCH=$(detect_arch)
 print_info "Detected architecture: $ARCH"
 
 if [ "$INSTALL_OPTION" = "all" ] || [ "$INSTALL_OPTION" = "daemon" ]; then
     # Need optimal daemon variant
+    print_info "Starting GPU/CUDA detection for daemon..."
     VARIANT=$(detect_cuda)
     print_info "Using variant: $VARIANT"
 else
     # For app/applet-only, just use CPU variant (app/applet are identical in all variants)
+    print_info "Using CPU variant for app/applet-only installation"
     VARIANT="cpu"
 fi
 
@@ -613,6 +660,7 @@ if [ "$VERSION" = "latest" ]; then
         print_error "Failed to fetch latest version"
         exit 1
     fi
+    print_info "Found version: $VERSION"
 fi
 
 print_info "Installing Super STT $VERSION"
@@ -622,6 +670,7 @@ TARBALL_NAME="super-stt-${ARCH}-${VARIANT}.tar.gz"
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$VERSION/$TARBALL_NAME"
 
 print_info "Downloading from: $DOWNLOAD_URL"
+print_info "Creating temporary directory..."
 
 # Create temporary directory
 TEMP_DIR=$(mktemp -d)
