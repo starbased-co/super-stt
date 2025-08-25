@@ -691,7 +691,7 @@ impl AppModel {
                         match result {
                             Ok(enabled) => cosmic::Action::App(Message::PreviewTypingSettingLoaded(enabled)),
                             Err(e) => {
-                                log::warn!("Failed to load preview typing setting: {}", e);
+                                log::warn!("Failed to load preview typing setting: {e}");
                                 // Continue with default (false) - don't show error to user on startup
                                 cosmic::Action::App(Message::PreviewTypingSettingLoaded(false))
                             }
@@ -1114,7 +1114,7 @@ impl AppModel {
 
             Message::PreviewTypingError(err) => {
                 // Log error and show it to user in transcription text
-                log::warn!("Preview typing error: {}", err);
+                log::warn!("Preview typing error: {err}");
                 self.transcription_text = format!("Preview Typing Error: {err}");
                 Task::none()
             }

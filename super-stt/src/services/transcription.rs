@@ -285,7 +285,7 @@ impl RealTimeTranscriptionManager {
         Ok(receiver)
     }
 
-    /// Stop a session for a given client id
+    /// Stop session and wait for any in-progress GPU transcription to complete
     ///
     /// # Errors
     ///
@@ -296,6 +296,10 @@ impl RealTimeTranscriptionManager {
             // Cancel all in-flight transcription tasks for this session
             session.cancellation_token.cancel();
             debug!("Cancelled transcription tasks for session: {client_id}");
+            
+            // Wait for any active transcription to complete
+            drop(sessions); // Release the write lock
+            self.wait_for_transcription_completion(client_id).await;
 
             // Broadcast session stopped event
             let _ = self
@@ -311,6 +315,36 @@ impl RealTimeTranscriptionManager {
         }
 
         Ok(())
+    }
+    
+    /// Wait for any active transcription tasks to complete for a client
+    async fn wait_for_transcription_completion(&self, client_id: &str) {
+        const MAX_ATTEMPTS: u32 = 100; // Max 1 second (10ms * 100)
+        
+        // Wait for the decoding flag to become false, indicating GPU transcription is done
+        let mut attempts = 0;
+        
+        while attempts < MAX_ATTEMPTS {
+            let sessions = self.sessions.read().await;
+            if let Some(session) = sessions.get(client_id) {
+                if !session.decoding {
+                    debug!("GPU transcription completed for client: {client_id}");
+                    return;
+                }
+            } else {
+                // Session no longer exists, transcription must be done
+                debug!("Session removed, transcription completed for client: {client_id}");
+                return;
+            }
+            drop(sessions);
+            
+            // Wait a bit before checking again
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            attempts += 1;
+        }
+        
+        // If we reach here, log a warning but continue
+        warn!("Timeout waiting for GPU transcription to complete for client: {client_id}");
     }
 
     /// Ingest an audio chunk for a given client

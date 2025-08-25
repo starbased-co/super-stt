@@ -264,20 +264,21 @@ impl SuperSTTDaemon {
 
     /// Handle set preview typing command - enable or disable preview typing
     #[must_use]
-    pub fn handle_set_preview_typing(&self, enabled: bool) -> DaemonResponse {
+    pub async fn handle_set_preview_typing(&self, enabled: bool) -> DaemonResponse {
         // Update the in-memory setting
         self.preview_typing_enabled
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
 
-        // Save to config file
-        let config_result = {
-            let config_guard = self.config.blocking_read();
-            let mut config = config_guard.clone();
-            config.transcription.preview_typing_enabled = enabled;
-            config.save()
-        };
+        // Update the config directly (don't clone)
+        {
+            let mut config_guard = self.config.write().await;
+            config_guard.transcription.preview_typing_enabled = enabled;
+        }
 
-        match config_result {
+        // Broadcast config change (this saves the config to disk)
+        let broadcast_result = self.broadcast_config_change().await;
+
+        match broadcast_result {
             Ok(()) => {
                 info!(
                     "Preview typing {} and saved to config",

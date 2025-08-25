@@ -89,7 +89,7 @@ impl SuperSTTDaemon {
             Command::CancelDownload => self.handle_cancel_download(),
             Command::GetDownloadStatus => self.handle_get_download_status(),
             Command::ListAudioThemes => self.handle_list_audio_themes(),
-            Command::SetPreviewTyping { enabled } => self.handle_set_preview_typing(enabled),
+            Command::SetPreviewTyping { enabled } => self.handle_set_preview_typing(enabled).await,
             Command::GetPreviewTyping => self.handle_get_preview_typing(),
         }
     }

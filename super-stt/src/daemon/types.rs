@@ -84,6 +84,7 @@ pub struct SuperSTTDaemon {
     pub resource_manager: Arc<ResourceManager>,
     // Preview typing setting (beta feature)
     pub preview_typing_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    // Mutex to prevent GPU processing during typing operations
 }
 
 impl SuperSTTDaemon {
@@ -130,6 +131,7 @@ impl SuperSTTDaemon {
             config.transcription.preferred_model,
         )));
 
+        
         // Initialize other managers
         let realtime_manager = Arc::new(RealTimeTranscriptionManager::new(
             Arc::clone(&model),
@@ -490,6 +492,16 @@ impl SuperSTTDaemon {
         notification_manager: &Arc<NotificationManager>,
         config: &Arc<tokio::sync::RwLock<DaemonConfig>>,
     ) -> Result<(), anyhow::Error> {
+        // Save config to disk first
+        {
+            let config_guard = config.read().await;
+            if let Err(e) = config_guard.save() {
+                log::warn!("Failed to save config to disk: {e}");
+                return Err(anyhow::anyhow!("Failed to save config to disk: {e}"));
+            }
+        }
+        
+        // Then broadcast the change
         let config_guard = config.read().await;
         let config_json = serde_json::to_value(&*config_guard)?;
         drop(config_guard);
@@ -505,7 +517,7 @@ impl SuperSTTDaemon {
             )
             .await?;
 
-        log::debug!("Broadcasted config change event to all connected clients");
+        log::debug!("Saved config to disk and broadcasted config change event to all connected clients");
         Ok(())
     }
 }
