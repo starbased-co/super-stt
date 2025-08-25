@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::{daemon::types::SuperSTTDaemon, output::keyboard::Simulator};
+use crate::{daemon::types::SuperSTTDaemon, output::preview::Typer};
 use super_stt_shared::models::protocol::{Command, DaemonRequest, DaemonResponse};
 
 impl SuperSTTDaemon {
@@ -53,9 +53,6 @@ impl SuperSTTDaemon {
                 self.handle_start_realtime(client_id, sample_rate, language)
                     .await
             }
-            Command::StopRealTimeTranscription { client_id } => {
-                self.handle_stop_realtime(client_id).await
-            }
             Command::RealTimeAudioChunk {
                 client_id,
                 audio_data,
@@ -65,17 +62,8 @@ impl SuperSTTDaemon {
                     .await
             }
             Command::Record { write_mode } => {
-                let mut keyboard_simulator = match Simulator::new() {
-                    Ok(simulator) => simulator,
-                    Err(e) => {
-                        log::warn!("Failed to initialize keyboard simulator: {e}");
-                        return DaemonResponse::error(&format!(
-                            "Keyboard initialization failed: {e}"
-                        ));
-                    }
-                };
-                self.handle_record_internal(&mut keyboard_simulator, write_mode)
-                    .await
+                let mut typer = Typer::default();
+                self.handle_record_internal(&mut typer, write_mode).await
             }
             Command::SetAudioTheme { theme } => self.handle_set_audio_theme(theme),
             Command::GetAudioTheme => self.handle_get_audio_theme(),
@@ -115,20 +103,6 @@ impl SuperSTTDaemon {
             Err(e) => {
                 log::error!("Failed to start real-time session: {e}");
                 DaemonResponse::error(&format!("Failed to start real-time session: {e}"))
-            }
-        }
-    }
-
-    pub async fn handle_stop_realtime(&self, client_id: String) -> DaemonResponse {
-        match self.realtime_manager.stop_session(&client_id).await {
-            Ok(()) => {
-                log::info!("Stopped real-time transcription for client: {client_id}");
-                DaemonResponse::success()
-                    .with_message("Real-time transcription session stopped".to_string())
-            }
-            Err(e) => {
-                log::error!("Failed to stop real-time session: {e}");
-                DaemonResponse::error(&format!("Failed to stop real-time session: {e}"))
             }
         }
     }

@@ -34,7 +34,6 @@ pub struct DaemonAudioRecorder {
     recording_state: Arc<Mutex<RecordingState>>,
     pub audio_level_tx: broadcast::Sender<AudioLevel>,
     audio_theme: AudioTheme,
-    _stream: Option<Stream>,
     // Audio device initialization state
     audio_device_cache: Arc<Mutex<Option<AudioDeviceCache>>>,
 }
@@ -63,7 +62,6 @@ impl DaemonAudioRecorder {
             recording_state: Arc::new(Mutex::new(RecordingState::new())),
             audio_level_tx,
             audio_theme: theme,
-            _stream: None,
             audio_device_cache: Arc::new(Mutex::new(None)),
         };
 
@@ -271,10 +269,10 @@ impl DaemonAudioRecorder {
         }
 
         drop(stream);
-        
+
         // Close the samples channel to stop the analysis task
         drop(samples_tx);
-        
+
         // Wait for analysis task to finish
         let _ = analysis_task.await;
 

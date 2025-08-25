@@ -1,32 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::audio::recorder::DaemonAudioRecorder;
 use crate::daemon::types::SuperSTTDaemon;
-use crate::output::keyboard::Simulator;
 use crate::services::dbus::ListeningEvent;
+use crate::{audio::recorder::DaemonAudioRecorder, output::preview::Typer};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use super_stt_shared::models::protocol::DaemonResponse;
+use tokio::time::Instant;
 
 // Removed PreviewContext - no longer needed with simplified architecture
 
 impl SuperSTTDaemon {
     /// Handle record command - direct recording in daemon (legacy method)
-    pub async fn handle_record(
-        &self,
-        keyboard_simulator: &mut Simulator,
-        write_mode: bool,
-    ) -> DaemonResponse {
-        self.handle_record_internal(keyboard_simulator, write_mode)
-            .await
+    pub async fn handle_record(&self, typer: &mut Typer, write_mode: bool) -> DaemonResponse {
+        self.handle_record_internal(typer, write_mode).await
     }
 
     /// Internal record handling implementation
     pub async fn handle_record_internal(
         &self,
-        keyboard_simulator: &mut Simulator,
+        typer: &mut Typer,
         write_mode: bool,
     ) -> DaemonResponse {
         // Check if already recording - prevent multiple simultaneous recordings
@@ -41,11 +36,8 @@ impl SuperSTTDaemon {
         }
 
         // Wait for recording to complete and return the transcription
-        match self
-            .record_and_transcribe(keyboard_simulator, write_mode)
-            .await
-        {
-            Ok((transcription, _preview_typed_count)) => {
+        match self.record_and_transcribe(typer, write_mode).await {
+            Ok(transcription) => {
                 if transcription.trim().is_empty() {
                     info!("🎤 Recording completed - No speech detected");
                     DaemonResponse::success()
@@ -53,9 +45,6 @@ impl SuperSTTDaemon {
                         .with_transcription(String::new())
                 } else {
                     info!("🎤 Recording completed: '{transcription}'");
-
-                    // Final typing will be handled in record_and_transcribe_impl method
-                    // after proper GPU completion and sequencing
 
                     DaemonResponse::success()
                         .with_message("Recording completed successfully".to_string())
@@ -81,188 +70,60 @@ impl SuperSTTDaemon {
     /// Panics if internal locks (e.g., audio theme or buffers) are poisoned.
     pub async fn record_and_transcribe(
         &self,
-        keyboard_simulator: &mut Simulator,
+        typer: &mut Typer,
         write_mode: bool,
-    ) -> Result<(String, usize)> {
-        self.record_and_transcribe_impl(keyboard_simulator, write_mode)
-            .await
-    }
-
-    /// Internal implementation split out to reduce function size
-    #[allow(clippy::too_many_lines)]
-    async fn record_and_transcribe_impl(
-        &self,
-        keyboard_simulator: &mut Simulator,
-        write_mode: bool,
-    ) -> Result<(String, usize)> {
+    ) -> Result<String> {
         info!("Starting direct audio recording in daemon with simplified architecture");
 
         // Set up recording state and create recorder
-        let mut recorder = self.setup_recording_session().await?;
+        let mut recorder = self.setup_recording_session(write_mode).await?;
 
-        // Simple architecture: just record audio, then process sequentially
-        let mut preview_typed_count = 0;
-
-        // Set up preview typing state if enabled
-        let preview_typing_enabled = write_mode
-            && self
-                .preview_typing_enabled
-                .load(std::sync::atomic::Ordering::Relaxed);
-        
-        // Shared state for preview typing (will be used in main thread later)
-        let preview_state = if preview_typing_enabled {
-            info!("Preview typing enabled");
-            Some(std::sync::Arc::new(std::sync::Mutex::new(crate::output::preview::State::default())))
-        } else {
-            None
-        };
-        
         let actually_typed = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        let typed_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let cancellation_token = std::sync::Arc::new(tokio_util::sync::CancellationToken::new());
 
-        // Start preview transcription if typing enabled
-        let preview_session_id = if let Some(ref state) = preview_state {
-            let input_rate = recorder.detect_default_input_sample_rate().ok();
-            match self
-                .realtime_manager
-                .start_session("preview".to_string(), input_rate, None)
-                .await
-            {
-                Ok(mut preview_rx) => {
-                    let state_clone = Arc::clone(state);
-                    let actually_typed_clone = Arc::clone(&actually_typed);
-                    let typed_counter_clone = Arc::clone(&typed_counter);
-                    let cancellation_token_clone = Arc::clone(&cancellation_token);
-                    
-                    tokio::spawn(async move {
-                        // Create a separate keyboard simulator for the preview task
-                        let mut preview_simulator = match crate::output::keyboard::Simulator::new() {
-                            Ok(sim) => sim,
-                            Err(e) => {
-                                warn!("Failed to create preview keyboard simulator: {e}");
-                                return;
-                            }
-                        };
-                        
-                        while let Ok(text) = preview_rx.recv().await {
-                            if let (Ok(mut state), Ok(mut actually_typed)) = (
-                                state_clone.lock(),
-                                actually_typed_clone.lock()
-                            ) {
-                                preview_simulator.update_preview(
-                                    &text,
-                                    &mut actually_typed,
-                                    &typed_counter_clone,
-                                    &mut state,
-                                    &cancellation_token_clone,
-                                );
-                            }
-                        }
-                    });
-                    Some("preview".to_string())
-                }
-                Err(e) => {
-                    warn!("Failed to start preview session: {e}");
-                    None
+        let mut start_time = Instant::now();
+        while recorder.still_recording {
+            // Sleep until model processing interval has been reached
+            // We need to get from STTModel::get_processing_interval()
+            tokio::time::sleep(model_processing_interval).await;
+
+            // Ask recorder thread for last 10 seconds of audio data
+            let audio_data = recorder.get_last_10_seconds().await?;
+
+            // Transcribe audio data using STTModel
+            let text = stt_model.transcribe(audio_data).await?;
+
+            if write_mode {
+                if let Ok(mut actually_typed) = actually_typed.lock() {
+                    typer.update_preview(&text, &mut actually_typed);
                 }
             }
-        } else {
-            None
-        };
-
-        // Emit D-Bus listening started event
-        self.emit_listening_started_dbus(write_mode).await;
-
-        // Record audio with optional preview streaming
-        let audio_data = if let Some(ref session_id) = preview_session_id {
-            // Record with preview streaming
-            self.record_with_preview_streaming(&mut recorder, session_id)
-                .await?
-        } else {
-            // Simple recording without preview
-            recorder
-                .record_until_silence_with_streaming(Arc::clone(&self.udp_streamer), None)
-                .await?
-        };
-
-        // STEP 1: GPU preview finish - wait for preview transcription to completely stop
-        if let Some(session_id) = preview_session_id {
-            info!("Step 1: Waiting for GPU preview transcription to finish...");
-            let _ = self.realtime_manager.stop_session(&session_id).await; // This now waits for GPU completion
-
-            preview_typed_count = typed_counter.load(std::sync::atomic::Ordering::Relaxed);
-            info!("Step 1 complete: GPU preview transcription finished");
         }
+        info!("Step 1 complete: Preview has finished");
 
-        // STEP 2: Clear preview (now safe since GPU preview finished)
-        if write_mode && preview_typed_count > 0 {
-            info!("Step 2: Clearing {preview_typed_count} preview characters");
-            if let (Some(state_arc), Ok(mut actually_typed_guard)) = (
-                &preview_state,
-                actually_typed.lock()
-            ) {
-                if let Ok(mut state) = state_arc.lock() {
-                    keyboard_simulator.clear_preview(
-                        &mut actually_typed_guard,
-                        &typed_counter,
-                        &mut state,
-                        &cancellation_token,
-                    );
-                }
-            }
-            info!("Step 2 complete: Preview cleared");
+        // Clear preview after recording is done
+        if let Ok(mut actually_typed) = actually_typed.lock() {
+            typer.clear_preview(&mut actually_typed);
         }
+        info!("Step 2 complete: Preview has been cleared");
 
         // STEP 3: Loader start + STEP 4: GPU final transcription + STEP 5: Loader end
         info!("Step 3-5: Starting loader, running GPU final transcription, stopping loader");
         let transcription_result = self
-            .transcribe_with_spinner(keyboard_simulator, &audio_data, write_mode)
+            .transcribe_with_spinner(typer, &recorder.get_full_audio_data(), write_mode)
             .await?;
         info!("Step 3-5 complete: Final GPU transcription finished");
 
-        // Finalize recording session and return result
-        let preview_count_atomic =
-            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(preview_typed_count));
-        self.finalize_recording_session(&transcription_result, &preview_count_atomic)
-            .await;
-
         // STEP 6: Type final transcript
         if write_mode {
-            info!("Step 6: Typing final transcription");
-            if let (Some(state_arc), Ok(mut actually_typed_guard)) = (
-                &preview_state,
-                actually_typed.lock()
-            ) {
-                if let Ok(mut state) = state_arc.lock() {
-                    // Use main thread keyboard simulator for final transcription
-                    keyboard_simulator.process_final_text(
-                        &transcription_result,
-                        &mut actually_typed_guard,
-                        &typed_counter,
-                        &mut state,
-                        &cancellation_token,
-                    );
-                    info!("Step 6 complete: Final transcription typed successfully");
-                }
-            } else {
-                // No preview typing, type directly
-                let processed_text =
-                    crate::output::preview::Typer::preprocess_text(&transcription_result, false);
-                let final_text = format!("{processed_text} ");
-                if let Err(e) = keyboard_simulator.type_text(&final_text) {
-                    warn!("Failed to type final transcription: {e}");
-                } else {
-                    info!("Step 6 complete: Final transcription typed directly");
-                }
-            }
+            typer.process_final_text(&transcription_result);
         }
+        info!("Step 6 complete: Final transcription typed successfully");
 
         info!(
             "🎯 Perfect sequence completed: GPU preview finish → clear → loader → GPU final → type final"
         );
 
-        Ok((transcription_result, preview_typed_count))
+        Ok((transcription_result))
     }
 
     /// Record audio and stream to preview session
@@ -293,7 +154,7 @@ impl SuperSTTDaemon {
     }
 
     /// Set up recording state and create audio recorder
-    async fn setup_recording_session(&self) -> Result<DaemonAudioRecorder> {
+    async fn setup_recording_session(&self, write_mode: bool) -> Result<DaemonAudioRecorder> {
         // Double-check recording state and set atomically
         {
             let mut is_recording_guard = self.is_recording.write().await;
@@ -304,192 +165,17 @@ impl SuperSTTDaemon {
             // Set recording state to true atomically
             *is_recording_guard = true;
         }
+
+        // Emit UDP recording state change
         self.broadcast_recording_state_change(true).await;
+
+        // Emit D-Bus listening started event
+        self.emit_listening_started_dbus(write_mode).await;
 
         // Create audio recorder with current theme
         let current_theme = self.get_audio_theme();
         DaemonAudioRecorder::new_with_theme(current_theme)
             .context("Failed to create audio recorder")
-    }
-
-    /// Set up preview session for real-time typing (legacy - kept for reference)
-    #[allow(dead_code)]
-    #[allow(clippy::too_many_lines)]
-    async fn setup_preview_session(
-        &self,
-        write_mode: bool,
-        recorder: &mut DaemonAudioRecorder,
-    ) -> (
-        Option<tokio::sync::mpsc::UnboundedSender<(Vec<f32>, u32)>>,
-        Option<tokio::task::JoinHandle<()>>,
-        Option<tokio::task::JoinHandle<()>>,
-        Option<crate::output::typing_thread::TypingThreadHandle>,
-        std::sync::Arc<std::sync::atomic::AtomicBool>,
-        std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        String,
-    ) {
-        let mut preview_audio_tx: Option<tokio::sync::mpsc::UnboundedSender<(Vec<f32>, u32)>> =
-            None;
-        let mut preview_forwarder: Option<tokio::task::JoinHandle<()>> = None;
-        let mut preview_typer: Option<tokio::task::JoinHandle<()>> = None;
-        let mut typing_handle_option: Option<crate::output::typing_thread::TypingThreadHandle> =
-            None;
-        let preview_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let preview_typed_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let preview_client_id = "record_preview".to_string();
-
-        if write_mode
-            && self
-                .preview_typing_enabled
-                .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            info!("Preview typing is enabled - setting up preview session");
-            // Detect the input sample rate the recorder will use
-            let input_rate = match recorder.detect_default_input_sample_rate() {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    warn!("Could not detect input sample rate for preview: {e}");
-                    None
-                }
-            };
-            // Start real-time session and subscribe to updates
-            match self
-                .realtime_manager
-                .start_session(preview_client_id.clone(), input_rate, None)
-                .await
-            {
-                Ok(mut rx) => {
-                    info!(
-                        "Preview session started (client_id='{preview_client_id}', input_rate={input_rate:?})"
-                    );
-                    // Create single typing thread handle
-                    let typing_handle =
-                        match crate::output::typing_thread::TypingThreadHandle::spawn() {
-                            Ok(handle) => handle,
-                            Err(e) => {
-                                warn!("Failed to create typing thread: {e}");
-                                return (
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    preview_cancel,
-                                    preview_typed_count,
-                                    preview_client_id,
-                                );
-                            }
-                        };
-                    let typing_handle_clone = typing_handle.clone();
-                    typing_handle_option = Some(typing_handle.clone());
-
-                    // Spawn task to forward transcriptions to typing thread
-                    let cancel_flag = std::sync::Arc::clone(&preview_cancel);
-                    let typed_counter = std::sync::Arc::clone(&preview_typed_count);
-                    preview_typer = Some(tokio::spawn(async move {
-                        let mut last = String::new();
-                        let mut last_update_time = std::time::Instant::now();
-
-                        while !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            // Check cancel flag
-                            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                break;
-                            }
-                            let msg = tokio::select! {
-                                res = rx.recv() => res,
-                                () = tokio::time::sleep(std::time::Duration::from_millis(50)) => continue,
-                            };
-                            let Ok(new_text) = msg else { break };
-
-                            // Check cancel flag again after receiving message (race condition protection)
-                            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                debug!("Ignoring late preview update - recording stopped");
-                                break;
-                            }
-
-                            // Skip duplicate updates (same text received within 100ms)
-                            if new_text == last
-                                && last_update_time.elapsed()
-                                    < std::time::Duration::from_millis(100)
-                            {
-                                debug!("Skipping duplicate preview update");
-                                continue;
-                            }
-
-                            info!(
-                                "Preview update: '{}' -> '{}'",
-                                last.chars().take(30).collect::<String>(),
-                                new_text.chars().take(30).collect::<String>()
-                            );
-
-                            // Send to typing thread
-                            if let Err(e) =
-                                typing_handle_clone.update_preview(new_text.clone()).await
-                            {
-                                warn!("Failed to update preview: {e}");
-                                break;
-                            }
-
-                            // Update counter from typing thread
-                            if let Ok(count) = typing_handle_clone.get_char_count().await {
-                                typed_counter.store(count, std::sync::atomic::Ordering::Relaxed);
-                            }
-
-                            last = new_text;
-                            last_update_time = std::time::Instant::now();
-                        }
-
-                        // Clear all preview text before exiting
-                        let chars_to_clear =
-                            typed_counter.load(std::sync::atomic::Ordering::Relaxed);
-                        if chars_to_clear > 0 {
-                            info!("Clearing {chars_to_clear} preview characters before exit");
-                            if let Err(e) = typing_handle_clone.clear().await {
-                                warn!("Failed to clear preview: {e}");
-                            }
-                        }
-
-                        // Shutdown typing thread
-                        typing_handle.shutdown();
-
-                        info!(
-                            "Preview typer exiting. Final chars on screen: {}",
-                            typed_counter.load(std::sync::atomic::Ordering::Relaxed)
-                        );
-                    }));
-
-                    // Create channel for audio forwarding to real-time manager
-                    let (tx, mut rx_audio) =
-                        tokio::sync::mpsc::unbounded_channel::<(Vec<f32>, u32)>();
-                    preview_audio_tx = Some(tx);
-                    let manager = std::sync::Arc::clone(&self.realtime_manager);
-                    let client_id = preview_client_id.clone();
-                    let cancel_flag = std::sync::Arc::clone(&preview_cancel);
-                    preview_forwarder = Some(tokio::spawn(async move {
-                        while let Some((samples, sr)) = rx_audio.recv().await {
-                            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                break;
-                            }
-                            let _ = manager.process_audio_chunk(&client_id, samples, sr).await;
-                        }
-                    }));
-                }
-                Err(e) => {
-                    warn!("Failed to start real-time preview session: {e}");
-                }
-            }
-        } else if write_mode {
-            info!("Preview typing is disabled - skipping preview session");
-        }
-
-        (
-            preview_audio_tx,
-            preview_forwarder,
-            preview_typer,
-            typing_handle_option,
-            preview_cancel,
-            preview_typed_count,
-            preview_client_id,
-        )
     }
 
     /// Emit D-Bus listening started event
@@ -526,7 +212,7 @@ impl SuperSTTDaemon {
     /// Transcribe audio with spinner if needed
     async fn transcribe_with_spinner(
         &self,
-        keyboard_simulator: &mut Simulator,
+        typer: &mut Typer,
         audio_data: &[f32],
         write_mode: bool,
     ) -> Result<String> {
@@ -603,6 +289,7 @@ impl SuperSTTDaemon {
             let mut is_recording_guard = self.is_recording.write().await;
             *is_recording_guard = false;
         }
+        self.broadcast_recording_state_change(false).await;
 
         // Emit D-Bus listening stopped event
         if let Some(ref dbus_manager) = self.dbus_manager {

@@ -2,4 +2,3 @@
 
 pub mod keyboard;
 pub mod preview;
-pub mod typing_thread;

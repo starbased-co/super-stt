@@ -87,7 +87,7 @@ pub struct DaemonResponse {
     // Connection status fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_active: Option<bool>,
-    
+
     // Preview typing fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_typing_enabled: Option<bool>,
@@ -334,9 +334,6 @@ pub enum Command {
         sample_rate: Option<u32>,
         language: Option<String>,
     },
-    StopRealTimeTranscription {
-        client_id: String,
-    },
     RealTimeAudioChunk {
         client_id: String,
         audio_data: Vec<f32>,
@@ -452,7 +449,6 @@ impl TryFrom<DaemonRequest> for Command {
             }),
             "status" => Ok(Command::Status),
             "start_realtime" => Ok(cmd_start_realtime(&request)),
-            "stop_realtime" => cmd_stop_realtime(&request),
             "realtime_audio" => cmd_realtime_audio(&request),
             "record" => Ok(cmd_record(&request)),
             "set_audio_theme" => cmd_set_audio_theme(&request),
@@ -547,14 +543,6 @@ fn cmd_start_realtime(request: &DaemonRequest) -> Command {
     }
 }
 
-fn cmd_stop_realtime(request: &DaemonRequest) -> Result<Command, String> {
-    let client_id = request
-        .client_id
-        .clone()
-        .ok_or("Missing client_id for stop_realtime command")?;
-    Ok(Command::StopRealTimeTranscription { client_id })
-}
-
 fn cmd_realtime_audio(request: &DaemonRequest) -> Result<Command, String> {
     let client_id = request
         .client_id
@@ -635,6 +623,6 @@ fn cmd_set_preview_typing(request: &DaemonRequest) -> Result<Command, String> {
     let enabled = request
         .enabled
         .ok_or("Missing enabled field for set_preview_typing command")?;
-    
+
     Ok(Command::SetPreviewTyping { enabled })
 }
