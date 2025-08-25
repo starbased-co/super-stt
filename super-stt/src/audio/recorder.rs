@@ -176,7 +176,7 @@ impl DaemonAudioRecorder {
         let udp_streamer_clone = Arc::clone(&udp_streamer);
         let device_sample_rate_u32 = stream_config.sample_rate.0;
         let device_sample_rate = device_sample_rate_u32 as f32;
-        tokio::spawn(async move {
+        let analysis_task = tokio::spawn(async move {
             let frequency_analyzer = AudioAnalyzer::new(device_sample_rate, 1024);
 
             while let Some(samples) = samples_rx.recv().await {
@@ -219,7 +219,7 @@ impl DaemonAudioRecorder {
             buffer_clone,
             state_clone,
             level_tx,
-            samples_tx,
+            samples_tx.clone(),
         )?;
 
         // Wait for recording to complete with intelligent timeout
@@ -271,6 +271,12 @@ impl DaemonAudioRecorder {
         }
 
         drop(stream);
+        
+        // Close the samples channel to stop the analysis task
+        drop(samples_tx);
+        
+        // Wait for analysis task to finish
+        let _ = analysis_task.await;
 
         // Check if timeout occurred
         if timeout_occurred {

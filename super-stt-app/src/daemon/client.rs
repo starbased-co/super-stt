@@ -116,3 +116,13 @@ pub async fn set_device(socket_path: PathBuf, device: String) -> Result<(), Stri
 pub async fn fetch_daemon_config(socket_path: PathBuf) -> Result<serde_json::Value, String> {
     super_stt_shared::daemon::client::fetch_daemon_config(socket_path, get_client_id()).await
 }
+
+/// Set preview typing enabled/disabled on daemon
+pub async fn set_preview_typing(socket_path: PathBuf, enabled: bool) -> Result<(), String> {
+    super_stt_shared::daemon::client::set_preview_typing(socket_path, enabled, get_client_id()).await
+}
+
+/// Get current preview typing setting from daemon
+pub async fn get_preview_typing(socket_path: PathBuf) -> Result<bool, String> {
+    super_stt_shared::daemon::client::get_preview_typing(socket_path, get_client_id()).await
+}

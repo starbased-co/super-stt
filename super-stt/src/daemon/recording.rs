@@ -62,13 +62,32 @@ impl SuperSTTDaemon {
                 } else {
                     info!("🎤 Recording completed: '{transcription}'");
 
-                    // Handle delete preview and final text typing if write_mode is true
+                    // Handle final text typing if write_mode is true
                     if write_mode {
-                        // Perform erase + final typing in a single input session to avoid compositor races
-                        if let Err(e) = keyboard_simulator
-                            .replace_preview_and_type(preview_typed_count, &transcription)
-                        {
-                            warn!("Failed to erase+type final transcription: {e}");
+                        // Preview typer has already cleared its text, so just type the final result
+                        if preview_typed_count == 0 {
+                            // Preview was cleared successfully, just type final transcription
+                            let processed_text = crate::output::preview::Typer::preprocess_text(
+                                &transcription,
+                                false,
+                            );
+                            let final_text = format!("{processed_text} "); // Add space after
+
+                            if let Err(e) = keyboard_simulator.type_text(&final_text) {
+                                warn!("Failed to type final transcription: {e}");
+                            } else {
+                                info!("Typed final transcription: '{processed_text}'");
+                            }
+                        } else {
+                            // Fallback: preview clearing failed, use the old approach
+                            warn!(
+                                "Preview not fully cleared ({preview_typed_count} chars remain), using fallback"
+                            );
+                            if let Err(e) = keyboard_simulator
+                                .replace_preview_and_type(preview_typed_count, &transcription)
+                            {
+                                warn!("Failed to erase+type final transcription: {e}");
+                            }
                         }
                     }
 
@@ -196,7 +215,12 @@ impl SuperSTTDaemon {
         let preview_typed_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let preview_client_id = "record_preview".to_string();
 
-        if write_mode {
+        if write_mode
+            && self
+                .preview_typing_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            info!("Preview typing is enabled - setting up preview session");
             // Detect the input sample rate the recorder will use
             let input_rate = match recorder.detect_default_input_sample_rate() {
                 Ok(r) => Some(r),
@@ -275,8 +299,23 @@ impl SuperSTTDaemon {
                             last = new_text;
                             last_update_time = std::time::Instant::now();
                         }
+
+                        // Clear all preview text before exiting (same thread as typing)
+                        let chars_to_clear =
+                            typed_counter.load(std::sync::atomic::Ordering::Relaxed);
+                        if chars_to_clear > 0 {
+                            info!("Clearing {chars_to_clear} preview characters before exit");
+                            preview::Typer::clear_preview(
+                                &mut enigo,
+                                &mut actually_typed,
+                                &typed_counter,
+                                &mut preview_state,
+                                &cancellation_token,
+                            );
+                        }
+
                         info!(
-                            "Preview typer exiting. Total preview chars typed: {}",
+                            "Preview typer exiting. Final chars on screen: {}",
                             typed_counter.load(std::sync::atomic::Ordering::Relaxed)
                         );
                     }));
@@ -301,6 +340,8 @@ impl SuperSTTDaemon {
                     warn!("Failed to start real-time preview session: {e}");
                 }
             }
+        } else if write_mode {
+            info!("Preview typing is disabled - skipping preview session");
         }
 
         (
@@ -353,19 +394,39 @@ impl SuperSTTDaemon {
 
         // Stop preview session/tasks if any
         if write_mode {
+            // Signal the forwarder to stop (it should already be closing due to audio channel closure)
             preview_context
                 .cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
+
+            // Wait for audio forwarder to finish (it will exit when the channel closes or cancel flag is set)
+            if let Some(handle) = preview_context.forwarder
+                && let Err(e) = handle.await
+            {
+                warn!("Preview forwarder task panicked: {e}");
+            }
+
+            // Give the preview typer a moment to process any final transcription results
+            // that are still in the pipeline from the realtime transcription
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Wait for preview typer to finish naturally with accurate count
+            if let Some(handle) = preview_context.typer {
+                info!("Waiting for preview typer to finish...");
+                if let Err(e) = handle.await {
+                    warn!("Preview typer task panicked: {e}");
+                }
+                info!("Preview typer finished");
+
+                // Small delay to ensure any pending keyboard operations complete
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+
+            // Finally stop the realtime session
             let _ = self
                 .realtime_manager
                 .stop_session(&preview_context.client_id)
                 .await;
-            if let Some(handle) = preview_context.forwarder {
-                let _ = handle.await;
-            }
-            if let Some(handle) = preview_context.typer {
-                let _ = handle.await;
-            }
         }
 
         Ok(audio_data)
@@ -385,44 +446,44 @@ impl SuperSTTDaemon {
         // Track how many temporary spinner characters are visible (0-3)
         let visible_temp_chars = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         if write_mode {
-            let cancel_flag = std::sync::Arc::clone(&spinner_cancel);
-            let visible_temp_chars_inner = std::sync::Arc::clone(&visible_temp_chars);
-            spinner_handle = Some(tokio::task::spawn_blocking(move || {
-                use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+            let _cancel_flag = std::sync::Arc::clone(&spinner_cancel);
+            let _visible_temp_chars_inner = std::sync::Arc::clone(&visible_temp_chars);
+            // spinner_handle = Some(tokio::task::spawn_blocking(move || {
+            //     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
-                // Initialize input simulator; if it fails, just skip spinner.
-                let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
-                    return;
-                };
+            //     // Initialize input simulator; if it fails, just skip spinner.
+            //     let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
+            //         return;
+            //     };
 
-                // Loop until cancelled: type three dots, then backspace three times
-                while !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    // Type three dots
-                    for _ in 0..3 {
-                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            break;
-                        }
-                        let _ = enigo.text(".");
-                        visible_temp_chars_inner.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        std::thread::sleep(std::time::Duration::from_millis(90));
-                    }
+            //     // Loop until cancelled: type three dots, then backspace three times
+            //     while !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            //         // Type three dots
+            //         for _ in 0..3 {
+            //             if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            //                 break;
+            //             }
+            //             let _ = enigo.text(".");
+            //             visible_temp_chars_inner.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            //             std::thread::sleep(std::time::Duration::from_millis(90));
+            //         }
 
-                    // Backspace three times
-                    for _ in 0..3 {
-                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            break;
-                        }
-                        let _ = enigo.key(Key::Backspace, Direction::Click);
-                        let prev =
-                            visible_temp_chars_inner.load(std::sync::atomic::Ordering::Relaxed);
-                        if prev > 0 {
-                            visible_temp_chars_inner
-                                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(90));
-                    }
-                }
-            }));
+            //         // Backspace three times
+            //         for _ in 0..3 {
+            //             if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            //                 break;
+            //             }
+            //             let _ = enigo.key(Key::Backspace, Direction::Click);
+            //             let prev =
+            //                 visible_temp_chars_inner.load(std::sync::atomic::Ordering::Relaxed);
+            //             if prev > 0 {
+            //                 visible_temp_chars_inner
+            //                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            //             }
+            //             std::thread::sleep(std::time::Duration::from_millis(90));
+            //         }
+            //     }
+            // }));
         }
 
         // Process audio
@@ -470,7 +531,12 @@ impl SuperSTTDaemon {
         if let Some(handle) = spinner_handle.take() {
             spinner_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
             // Wait for the spinner task to exit
-            let _ = handle.await;
+            if let Err(e) = handle.await {
+                warn!("Spinner task panicked: {e}");
+            }
+
+            // Small delay to ensure spinner keyboard operations complete
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 
             // Clean up any remaining temporary characters (1-3)
             let leftover = visible_temp_chars

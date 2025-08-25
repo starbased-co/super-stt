@@ -11,13 +11,21 @@ pub struct Simulator {
     enigo: Enigo,
 }
 
-impl Default for Simulator {
-    fn default() -> Self {
-        Self {
+impl Simulator {
+    /// Creates a new Simulator instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the enigo keyboard connection cannot be established
+    pub fn new() -> Result<Self> {
+        let enigo = Enigo::new(&Settings::default())
+            .map_err(|e| anyhow::anyhow!("Failed to initialize keyboard simulator: {e}"))?;
+        
+        Ok(Self {
             typing_chunk: 64,
             backspace_batch_size: 20,
-            enigo: Enigo::new(&Settings::default()).unwrap(),
-        }
+            enigo,
+        })
     }
 }
 

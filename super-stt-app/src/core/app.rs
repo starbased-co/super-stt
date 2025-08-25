@@ -4,8 +4,8 @@ use crate::audio::{parse_audio_level_from_udp, parse_recording_state_from_udp};
 
 use crate::daemon::client::{
     cancel_download, fetch_daemon_config, get_current_device, get_current_model,
-    get_download_status, list_available_models, load_audio_themes, ping_daemon,
-    send_record_command, set_and_test_audio_theme, set_device, set_model, test_daemon_connection,
+    get_download_status, get_preview_typing, list_available_models, load_audio_themes, ping_daemon,
+    send_record_command, set_and_test_audio_theme, set_device, set_model, set_preview_typing, test_daemon_connection,
 };
 use crate::state::{AudioTheme, ContextPage, DaemonStatus, MenuAction, Page, RecordingStatus};
 use crate::ui::messages::Message;
@@ -104,6 +104,10 @@ pub struct AppModel {
     pub download_progress: Option<super_stt_shared::models::protocol::DownloadProgress>,
     /// Download state
     pub download_state: DownloadState,
+
+    // Preview typing state
+    /// Whether preview typing is enabled (beta feature)
+    pub preview_typing_enabled: bool,
 }
 
 /// Create a COSMIC application from the app model
@@ -184,6 +188,9 @@ impl cosmic::Application for AppModel {
             // Initialize download state
             download_progress: None,
             download_state: DownloadState::Idle,
+
+            // Initialize preview typing state (disabled by default as beta feature)
+            preview_typing_enabled: false,
         };
 
         // Create startup commands
@@ -286,6 +293,7 @@ impl cosmic::Application for AppModel {
                 &self.current_device,
                 &self.available_devices,
                 self.device_state == DeviceState::Switching,
+                self.preview_typing_enabled,
             ),
             Page::Testing => views::testing::page(
                 &self.recording_status,
@@ -475,6 +483,16 @@ impl cosmic::Application for AppModel {
             return self.handle_download_messages(message);
         }
 
+        // Try preview typing-related messages
+        if matches!(
+            message,
+            Message::PreviewTypingToggled(_)
+                | Message::PreviewTypingSettingLoaded(_)
+                | Message::PreviewTypingError(_)
+        ) {
+            return self.handle_preview_typing_messages(message);
+        }
+
         match message {
             // Original template messages
             Message::OpenRepositoryUrl => {
@@ -659,13 +677,27 @@ impl AppModel {
                     warn!("No audio theme found in daemon configuration");
                 }
 
-                Task::perform(
-                    async move {
-                        // Small delay to let daemon fully initialize
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                    },
-                    |()| cosmic::Action::App(Message::LoadModels),
-                )
+                // Load models and preview typing setting
+                Task::batch([
+                    Task::perform(
+                        async move {
+                            // Small delay to let daemon fully initialize
+                            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        },
+                        |()| cosmic::Action::App(Message::LoadModels),
+                    ),
+                    // Load preview typing setting from daemon
+                    Task::perform(get_preview_typing(self.socket_path.clone()), |result| {
+                        match result {
+                            Ok(enabled) => cosmic::Action::App(Message::PreviewTypingSettingLoaded(enabled)),
+                            Err(e) => {
+                                log::warn!("Failed to load preview typing setting: {}", e);
+                                // Continue with default (false) - don't show error to user on startup
+                                cosmic::Action::App(Message::PreviewTypingSettingLoaded(false))
+                            }
+                        }
+                    }),
+                ])
             }
 
             Message::DaemonError(err) => {
@@ -1054,6 +1086,36 @@ impl AppModel {
                     .take(200)
                     .collect::<String>();
                 self.transcription_text = format!("Model Error: {sanitized_error}");
+                Task::none()
+            }
+
+            _ => Task::none(),
+        }
+    }
+
+    /// Handle preview typing messages
+    fn handle_preview_typing_messages(&mut self, message: Message) -> Task<cosmic::Action<Message>> {
+        match message {
+            Message::PreviewTypingToggled(enabled) => {
+                self.preview_typing_enabled = enabled;
+                Task::perform(
+                    set_preview_typing(self.socket_path.clone(), enabled),
+                    move |result| match result {
+                        Ok(()) => cosmic::Action::App(Message::PreviewTypingSettingLoaded(enabled)),
+                        Err(e) => cosmic::Action::App(Message::PreviewTypingError(e)),
+                    },
+                )
+            }
+
+            Message::PreviewTypingSettingLoaded(enabled) => {
+                self.preview_typing_enabled = enabled;
+                Task::none()
+            }
+
+            Message::PreviewTypingError(err) => {
+                // Log error and show it to user in transcription text
+                log::warn!("Preview typing error: {}", err);
+                self.transcription_text = format!("Preview Typing Error: {err}");
                 Task::none()
             }
 

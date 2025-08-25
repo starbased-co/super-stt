@@ -82,6 +82,8 @@ pub struct SuperSTTDaemon {
     pub process_auth: ProcessAuth,
     // Resource management for connection and rate limiting
     pub resource_manager: Arc<ResourceManager>,
+    // Preview typing setting (beta feature)
+    pub preview_typing_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SuperSTTDaemon {
@@ -168,6 +170,9 @@ impl SuperSTTDaemon {
         // Initialize device state based on config
         let preferred_device = config.device.preferred_device.clone();
         let actual_device = preferred_device.clone(); // Will be updated when model loads
+        
+        // Extract preview typing setting before config gets moved
+        let preview_typing_enabled = config.transcription.preview_typing_enabled;
 
         // Create the daemon instance first (needed for model loading)
         let daemon = SuperSTTDaemon {
@@ -192,6 +197,8 @@ impl SuperSTTDaemon {
             active_connections: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             process_auth,
             resource_manager,
+            preview_typing_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(preview_typing_enabled)),
+        
         };
 
         // Apply temporary device override for current session (not saved to config)

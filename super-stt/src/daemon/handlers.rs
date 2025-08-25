@@ -262,6 +262,58 @@ impl SuperSTTDaemon {
             .with_message("Available audio themes listed successfully".to_string())
     }
 
+    /// Handle set preview typing command - enable or disable preview typing
+    #[must_use]
+    pub fn handle_set_preview_typing(&self, enabled: bool) -> DaemonResponse {
+        // Update the in-memory setting
+        self.preview_typing_enabled
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+
+        // Save to config file
+        let config_result = {
+            let config_guard = self.config.blocking_read();
+            let mut config = config_guard.clone();
+            config.transcription.preview_typing_enabled = enabled;
+            config.save()
+        };
+
+        match config_result {
+            Ok(()) => {
+                info!(
+                    "Preview typing {} and saved to config",
+                    if enabled { "enabled" } else { "disabled" }
+                );
+                DaemonResponse::success()
+                    .with_preview_typing_enabled(enabled)
+                    .with_message(format!(
+                        "Preview typing {} and saved",
+                        if enabled { "enabled" } else { "disabled" }
+                    ))
+            }
+            Err(e) => {
+                warn!("Preview typing setting changed but failed to save to config: {e}");
+                DaemonResponse::success()
+                    .with_preview_typing_enabled(enabled)
+                    .with_message(format!(
+                        "Preview typing {} (config save failed: {e})",
+                        if enabled { "enabled" } else { "disabled" }
+                    ))
+            }
+        }
+    }
+
+    /// Handle get preview typing command - return current preview typing setting
+    #[must_use]
+    pub fn handle_get_preview_typing(&self) -> DaemonResponse {
+        let enabled = self
+            .preview_typing_enabled
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        DaemonResponse::success()
+            .with_preview_typing_enabled(enabled)
+            .with_message("Preview typing setting retrieved successfully".to_string())
+    }
+
     /// Handle cancel download command
     #[must_use]
     pub fn handle_cancel_download(&self) -> DaemonResponse {

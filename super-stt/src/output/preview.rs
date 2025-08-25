@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use enigo::{Enigo, Keyboard};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::sync::{Arc, atomic::AtomicUsize};
 
 /// Unified, simplified preview typer that combines the best of both approaches
@@ -106,22 +106,32 @@ impl Typer {
 
         if old_text.is_empty() {
             if !new_text.is_empty() {
-                let _ = enigo.text(new_text);
-                debug!("Typed new text: {} chars", new_text.chars().count());
+                if enigo.text(new_text).is_ok() {
+                    debug!("Typed new text: {} chars", new_text.chars().count());
+                    return i32::try_from(new_text.chars().count()).unwrap_or_default();
+                }
+                debug!("Failed to type new text");
+                return 0;
             }
-            return i32::try_from(new_text.chars().count()).unwrap_or_default();
+            return 0;
         }
 
         if new_text.is_empty() {
             let chars_to_delete = old_text.chars().count();
-            for _ in 0..chars_to_delete {
-                if cancellation_token.is_cancelled() {
-                    return 0;
+            let mut actually_deleted = 0i32;
+            for i in 0..chars_to_delete {
+                if enigo
+                    .key(enigo::Key::Backspace, enigo::Direction::Click)
+                    .is_ok()
+                {
+                    actually_deleted += 1;
+                } else {
+                    debug!("Failed to backspace at position {i}");
+                    break;
                 }
-                let _ = enigo.key(enigo::Key::Backspace, enigo::Direction::Click);
             }
-            debug!("Cleared all {chars_to_delete} chars");
-            return -i32::try_from(chars_to_delete).unwrap_or_default();
+            debug!("Cleared {actually_deleted}/{chars_to_delete} chars");
+            return -actually_deleted;
         }
 
         let old_chars: Vec<char> = old_text.chars().collect();
@@ -142,26 +152,42 @@ impl Typer {
         );
 
         // Backspace to the first different position
+        let mut actually_deleted = 0i32;
         for i in 0..chars_to_delete {
             if cancellation_token.is_cancelled() {
                 debug!("Cancelled during backspace at {i}/{chars_to_delete}");
-                return 0;
+                break;
             }
-            let _ = enigo.key(enigo::Key::Backspace, enigo::Direction::Click);
+            if enigo
+                .key(enigo::Key::Backspace, enigo::Direction::Click)
+                .is_ok()
+            {
+                actually_deleted += 1;
+            } else {
+                debug!("Failed to backspace at position {i}");
+                break;
+            }
         }
 
         // Type the new part
-        if !text_to_type.is_empty() {
-            let _ = enigo.text(&text_to_type);
-            debug!(
-                "Typed new text: '{}'",
-                text_to_type.chars().take(20).collect::<String>()
-            );
+        let mut actually_typed_chars = 0i32;
+        if !text_to_type.is_empty() && !cancellation_token.is_cancelled() {
+            if enigo.text(&text_to_type).is_ok() {
+                actually_typed_chars =
+                    i32::try_from(text_to_type.chars().count()).unwrap_or_default();
+                debug!(
+                    "Typed new text: '{}'",
+                    text_to_type.chars().take(20).collect::<String>()
+                );
+            } else {
+                debug!("Failed to type new text portion");
+            }
         }
 
-        let net_change = i32::try_from(text_to_type.chars().count()).unwrap_or_default()
-            - i32::try_from(chars_to_delete).unwrap_or_default();
-        debug!("Net change: {net_change}");
+        let net_change = actually_typed_chars - actually_deleted;
+        debug!(
+            "Net change: {net_change} (deleted: {actually_deleted}, typed: {actually_typed_chars})"
+        );
         net_change
     }
 
@@ -432,48 +458,74 @@ impl Typer {
     ) {
         let old_char_count = actually_typed.chars().count();
         let new_char_count = new_text.chars().count();
+        let mut actual_chars_on_screen = old_char_count;
 
         if old_char_count == 0 {
             // Screen is empty, just type the new text
-            let _ = enigo.text(new_text);
-            info!(
-                "Initial typed: '{}' ({} chars)",
-                new_text.chars().take(40).collect::<String>(),
-                new_char_count
-            );
+            if enigo.text(new_text).is_ok() {
+                actual_chars_on_screen = new_char_count;
+                info!(
+                    "Initial typed: '{}' ({} chars)",
+                    new_text.chars().take(40).collect::<String>(),
+                    new_char_count
+                );
+            } else {
+                warn!("Failed to type initial text, keeping counter at 0");
+                actual_chars_on_screen = 0;
+            }
         } else if new_text.starts_with(actually_typed.as_str())
             && new_text.len() > actually_typed.len()
         {
             // Perfect extension - just add the suffix (most common case)
             let suffix = &new_text[actually_typed.len()..];
-            let _ = enigo.text(suffix);
-            info!(
-                "Extended: '{}' (+{} chars, total: {})",
-                suffix.chars().take(20).collect::<String>(),
-                suffix.chars().count(),
-                new_char_count
-            );
+            if enigo.text(suffix).is_ok() {
+                actual_chars_on_screen = new_char_count;
+                info!(
+                    "Extended: '{}' (+{} chars, total: {})",
+                    suffix.chars().take(20).collect::<String>(),
+                    suffix.chars().count(),
+                    new_char_count
+                );
+            } else {
+                warn!("Failed to type suffix, keeping old counter");
+                // Keep the old character count since typing failed
+            }
         } else {
             // Need to replace - use differential update
             let net_change =
                 Self::apply_simple_diff(enigo, actually_typed, new_text, cancellation_token);
 
             if cancellation_token.is_cancelled() {
+                debug!("Update cancelled, keeping existing character count");
                 return;
             }
 
+            // Calculate actual characters on screen based on the net change
+            let new_count = i32::try_from(old_char_count).unwrap_or_default() + net_change;
+            actual_chars_on_screen = usize::try_from(new_count.max(0)).unwrap_or_default();
+
             info!(
-                "Replaced: {}{} chars (total: {})",
+                "Replaced: {}{} chars (screen total: {})",
                 if net_change >= 0 { "+" } else { "" },
                 net_change,
-                new_char_count
+                actual_chars_on_screen
             );
         }
 
-        // Update state to match what we just typed
-        actually_typed.clear();
-        actually_typed.push_str(new_text);
-        typed_counter.store(new_char_count, std::sync::atomic::Ordering::Relaxed);
+        // Update state to match what we think is actually on screen
+        if actual_chars_on_screen == new_char_count {
+            // Typing succeeded completely
+            actually_typed.clear();
+            actually_typed.push_str(new_text);
+        } else {
+            // Typing failed or was partial - we can't be sure what's on screen
+            // Keep the old actually_typed but log the discrepancy
+            warn!(
+                "Character count mismatch: expected {new_char_count}, actual {actual_chars_on_screen}"
+            );
+        }
+
+        typed_counter.store(actual_chars_on_screen, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Clear all typed text and reset state
@@ -482,7 +534,7 @@ impl Typer {
         actually_typed: &mut String,
         typed_counter: &Arc<AtomicUsize>,
         state: &mut State,
-        cancellation_token: &tokio_util::sync::CancellationToken,
+        _cancellation_token: &tokio_util::sync::CancellationToken,
     ) {
         if actually_typed.is_empty() {
             return;
@@ -493,19 +545,15 @@ impl Typer {
         let mut remaining = chars_to_delete;
 
         while remaining > 0 {
-            if cancellation_token.is_cancelled() {
-                debug!("Cancelled during clear at {remaining} remaining");
-                return;
-            }
-
             let batch = remaining.min(batch_size);
             for _ in 0..batch {
                 let _ = enigo.key(enigo::Key::Backspace, enigo::Direction::Click);
+                std::thread::sleep(std::time::Duration::from_millis(25));
             }
             remaining -= batch;
 
             if remaining > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(25));
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         }
 
