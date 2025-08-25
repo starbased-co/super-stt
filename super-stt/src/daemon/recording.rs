@@ -171,7 +171,7 @@ impl SuperSTTDaemon {
         if let Some(session_id) = preview_session_id {
             info!("Step 1: Waiting for GPU preview transcription to finish...");
             let _ = self.realtime_manager.stop_session(&session_id).await; // This now waits for GPU completion
-            
+
             if let Some(ref handle) = typing_handle {
                 preview_typed_count = handle.get_char_count().await.unwrap_or(0);
             }
@@ -182,16 +182,17 @@ impl SuperSTTDaemon {
         if write_mode && preview_typed_count > 0 {
             info!("Step 2: Clearing {preview_typed_count} preview characters");
             if let Some(ref handle) = typing_handle
-                && let Err(e) = handle.clear().await {
-                    warn!("Failed to clear preview: {e}");
-                }
+                && let Err(e) = handle.clear().await
+            {
+                warn!("Failed to clear preview: {e}");
+            }
             info!("Step 2 complete: Preview cleared");
         }
-        
+
         // STEP 3: Loader start + STEP 4: GPU final transcription + STEP 5: Loader end
         info!("Step 3-5: Starting loader, running GPU final transcription, stopping loader");
         let transcription_result = self
-            .transcribe_with_spinner(keyboard_simulator, &audio_data, write_mode)
+            .transcribe_with_spinner(keyboard_simulator, &audio_data, write_mode, &typing_handle)
             .await?;
         info!("Step 3-5 complete: Final GPU transcription finished");
 
@@ -229,8 +230,10 @@ impl SuperSTTDaemon {
                 }
             }
         }
-        
-        info!("🎯 Perfect sequence completed: GPU preview finish → clear → loader → GPU final → type final");
+
+        info!(
+            "🎯 Perfect sequence completed: GPU preview finish → clear → loader → GPU final → type final"
+        );
 
         Ok((transcription_result, preview_typed_count))
     }
@@ -499,6 +502,7 @@ impl SuperSTTDaemon {
         keyboard_simulator: &mut Simulator,
         audio_data: &[f32],
         write_mode: bool,
+        typing_handle: &Option<crate::output::typing_thread::TypingThreadHandle>,
     ) -> Result<String> {
         // If we'll type the result, show a simple spinner by typing characters and backspacing
         // This indicates work while transcription runs.
@@ -506,44 +510,37 @@ impl SuperSTTDaemon {
         let spinner_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         // Track how many temporary spinner characters are visible (0-3)
         let visible_temp_chars = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        if write_mode {
+        if write_mode && typing_handle.is_some() {
+            // Use the typing thread for loader animation instead of separate Enigo instance
+            let handle = typing_handle.as_ref().unwrap();
             let cancel_flag = std::sync::Arc::clone(&spinner_cancel);
-            let visible_temp_chars_inner = std::sync::Arc::clone(&visible_temp_chars);
-            spinner_handle = Some(tokio::task::spawn_blocking(move || {
-                use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-
-                // Initialize input simulator; if it fails, just skip spinner.
-                let Ok(mut enigo) = Enigo::new(&Settings::default()) else {
-                    return;
-                };
-
-                // Loop until cancelled: type three dots, then backspace three times
+            let handle_clone = handle.clone();
+            
+            spinner_handle = Some(tokio::spawn(async move {
+                let mut dots = 0;
+                
                 while !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    // Type three dots
-                    for _ in 0..3 {
-                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            break;
+                    // Add dots (up to 3)
+                    while dots < 3 && !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Err(_) = handle_clone.update_preview(".".repeat(dots + 1)).await {
+                            return;
                         }
-                        let _ = enigo.text(".");
-                        visible_temp_chars_inner.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        std::thread::sleep(std::time::Duration::from_millis(90));
+                        dots += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(90)).await;
                     }
-
-                    // Backspace three dots
-                    for _ in 0..3 {
-                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            break;
+                    
+                    // Remove dots
+                    while dots > 0 && !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        dots -= 1;
+                        if let Err(_) = handle_clone.update_preview(".".repeat(dots)).await {
+                            return;
                         }
-                        let _ = enigo.key(Key::Backspace, Direction::Click);
-                        let prev =
-                            visible_temp_chars_inner.load(std::sync::atomic::Ordering::Relaxed);
-                        if prev > 0 {
-                            visible_temp_chars_inner
-                                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(90));
+                        tokio::time::sleep(std::time::Duration::from_millis(90)).await;
                     }
                 }
+                
+                // Clean up - clear all dots
+                let _ = handle_clone.update_preview(String::new()).await;
             }));
         }
 
@@ -591,21 +588,9 @@ impl SuperSTTDaemon {
         // Stop spinner if it was started
         if let Some(handle) = spinner_handle.take() {
             spinner_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-            // Wait for the spinner task to exit
+            // Wait for the spinner task to exit and clean up
             if let Err(e) = handle.await {
                 warn!("Spinner task panicked: {e}");
-            }
-
-            // Small delay to ensure spinner keyboard operations complete
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-
-            // Clean up any remaining temporary characters (1-3)
-            let leftover = visible_temp_chars
-                .load(std::sync::atomic::Ordering::Relaxed)
-                .min(3);
-            if leftover > 0 {
-                keyboard_simulator.backspace_n(leftover)?;
-                visible_temp_chars.store(0, std::sync::atomic::Ordering::Relaxed);
             }
         }
 

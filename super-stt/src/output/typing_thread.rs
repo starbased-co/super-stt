@@ -123,6 +123,7 @@ impl TypingThreadHandle {
         Ok(response_rx.recv().await.unwrap_or(0))
     }
 
+
     /// Shutdown the typing thread
     pub fn shutdown(&self) {
         let _ = self.sender.send(TypingMessage::Shutdown);
