@@ -27,6 +27,61 @@ impl Simulator {
             enigo,
         })
     }
+    
+    /// Clear preview text using Typer
+    pub fn clear_preview(
+        &mut self,
+        actually_typed: &mut String,
+        typed_counter: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        state: &mut crate::output::preview::State,
+        cancellation_token: &tokio_util::sync::CancellationToken,
+    ) {
+        Typer::clear_preview(
+            &mut self.enigo,
+            actually_typed,
+            typed_counter,
+            state,
+            cancellation_token,
+        );
+    }
+
+    /// Process final text using Typer
+    pub fn process_final_text(
+        &mut self,
+        final_text: &str,
+        actually_typed: &mut String,
+        typed_counter: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        state: &mut crate::output::preview::State,
+        cancellation_token: &tokio_util::sync::CancellationToken,
+    ) {
+        Typer::process_final_text(
+            &mut self.enigo,
+            final_text,
+            actually_typed,
+            typed_counter,
+            state,
+            cancellation_token,
+        );
+    }
+
+    /// Update preview text using Typer
+    pub fn update_preview(
+        &mut self,
+        new_text: &str,
+        actually_typed: &mut String,
+        typed_counter: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        state: &mut crate::output::preview::State,
+        cancellation_token: &tokio_util::sync::CancellationToken,
+    ) {
+        Typer::update_preview(
+            &mut self.enigo,
+            new_text,
+            actually_typed,
+            typed_counter,
+            state,
+            cancellation_token,
+        );
+    }
 }
 
 impl Simulator {

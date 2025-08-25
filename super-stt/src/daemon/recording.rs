@@ -103,28 +103,26 @@ impl SuperSTTDaemon {
         // Simple architecture: just record audio, then process sequentially
         let mut preview_typed_count = 0;
 
-        // Set up preview typing if enabled
-        let mut typing_handle = None;
-        if write_mode
+        // Set up preview typing state if enabled
+        let preview_typing_enabled = write_mode
             && self
                 .preview_typing_enabled
-                .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            // Create typing thread for preview
-            typing_handle = match crate::output::typing_thread::TypingThreadHandle::spawn() {
-                Ok(handle) => {
-                    info!("Preview typing enabled - created typing thread");
-                    Some(handle)
-                }
-                Err(e) => {
-                    warn!("Failed to create typing thread: {e}");
-                    None
-                }
-            };
-        }
+                .load(std::sync::atomic::Ordering::Relaxed);
+        
+        // Shared state for preview typing (will be used in main thread later)
+        let preview_state = if preview_typing_enabled {
+            info!("Preview typing enabled");
+            Some(std::sync::Arc::new(std::sync::Mutex::new(crate::output::preview::State::default())))
+        } else {
+            None
+        };
+        
+        let actually_typed = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let typed_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cancellation_token = std::sync::Arc::new(tokio_util::sync::CancellationToken::new());
 
         // Start preview transcription if typing enabled
-        let preview_session_id = if let Some(ref handle) = typing_handle {
+        let preview_session_id = if let Some(ref state) = preview_state {
             let input_rate = recorder.detect_default_input_sample_rate().ok();
             match self
                 .realtime_manager
@@ -132,12 +130,33 @@ impl SuperSTTDaemon {
                 .await
             {
                 Ok(mut preview_rx) => {
-                    let handle_clone = handle.clone();
+                    let state_clone = Arc::clone(state);
+                    let actually_typed_clone = Arc::clone(&actually_typed);
+                    let typed_counter_clone = Arc::clone(&typed_counter);
+                    let cancellation_token_clone = Arc::clone(&cancellation_token);
+                    
                     tokio::spawn(async move {
+                        // Create a separate keyboard simulator for the preview task
+                        let mut preview_simulator = match crate::output::keyboard::Simulator::new() {
+                            Ok(sim) => sim,
+                            Err(e) => {
+                                warn!("Failed to create preview keyboard simulator: {e}");
+                                return;
+                            }
+                        };
+                        
                         while let Ok(text) = preview_rx.recv().await {
-                            if let Err(e) = handle_clone.update_preview(text).await {
-                                debug!("Preview typing failed: {e}");
-                                break;
+                            if let (Ok(mut state), Ok(mut actually_typed)) = (
+                                state_clone.lock(),
+                                actually_typed_clone.lock()
+                            ) {
+                                preview_simulator.update_preview(
+                                    &text,
+                                    &mut actually_typed,
+                                    &typed_counter_clone,
+                                    &mut state,
+                                    &cancellation_token_clone,
+                                );
                             }
                         }
                     });
@@ -172,19 +191,25 @@ impl SuperSTTDaemon {
             info!("Step 1: Waiting for GPU preview transcription to finish...");
             let _ = self.realtime_manager.stop_session(&session_id).await; // This now waits for GPU completion
 
-            if let Some(ref handle) = typing_handle {
-                preview_typed_count = handle.get_char_count().await.unwrap_or(0);
-            }
+            preview_typed_count = typed_counter.load(std::sync::atomic::Ordering::Relaxed);
             info!("Step 1 complete: GPU preview transcription finished");
         }
 
         // STEP 2: Clear preview (now safe since GPU preview finished)
         if write_mode && preview_typed_count > 0 {
             info!("Step 2: Clearing {preview_typed_count} preview characters");
-            if let Some(ref handle) = typing_handle
-                && let Err(e) = handle.clear().await
-            {
-                warn!("Failed to clear preview: {e}");
+            if let (Some(state_arc), Ok(mut actually_typed_guard)) = (
+                &preview_state,
+                actually_typed.lock()
+            ) {
+                if let Ok(mut state) = state_arc.lock() {
+                    keyboard_simulator.clear_preview(
+                        &mut actually_typed_guard,
+                        &typed_counter,
+                        &mut state,
+                        &cancellation_token,
+                    );
+                }
             }
             info!("Step 2 complete: Preview cleared");
         }
@@ -192,7 +217,7 @@ impl SuperSTTDaemon {
         // STEP 3: Loader start + STEP 4: GPU final transcription + STEP 5: Loader end
         info!("Step 3-5: Starting loader, running GPU final transcription, stopping loader");
         let transcription_result = self
-            .transcribe_with_spinner(keyboard_simulator, &audio_data, write_mode, &typing_handle)
+            .transcribe_with_spinner(keyboard_simulator, &audio_data, write_mode)
             .await?;
         info!("Step 3-5 complete: Final GPU transcription finished");
 
@@ -205,19 +230,21 @@ impl SuperSTTDaemon {
         // STEP 6: Type final transcript
         if write_mode {
             info!("Step 6: Typing final transcription");
-            if let Some(handle) = typing_handle {
-                let processed_text =
-                    crate::output::preview::Typer::preprocess_text(&transcription_result, false);
-                let final_text = format!("{processed_text} ");
-
-                if let Err(e) = handle.process_final(final_text).await {
-                    warn!("Failed to process final transcription: {e}");
-                } else {
+            if let (Some(state_arc), Ok(mut actually_typed_guard)) = (
+                &preview_state,
+                actually_typed.lock()
+            ) {
+                if let Ok(mut state) = state_arc.lock() {
+                    // Use main thread keyboard simulator for final transcription
+                    keyboard_simulator.process_final_text(
+                        &transcription_result,
+                        &mut actually_typed_guard,
+                        &typed_counter,
+                        &mut state,
+                        &cancellation_token,
+                    );
                     info!("Step 6 complete: Final transcription typed successfully");
                 }
-
-                // Shutdown typing thread
-                handle.shutdown();
             } else {
                 // No preview typing, type directly
                 let processed_text =
@@ -502,7 +529,6 @@ impl SuperSTTDaemon {
         keyboard_simulator: &mut Simulator,
         audio_data: &[f32],
         write_mode: bool,
-        typing_handle: &Option<crate::output::typing_thread::TypingThreadHandle>,
     ) -> Result<String> {
         // If we'll type the result, show a simple spinner by typing characters and backspacing
         // This indicates work while transcription runs.
@@ -510,39 +536,8 @@ impl SuperSTTDaemon {
         let spinner_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         // Track how many temporary spinner characters are visible (0-3)
         let visible_temp_chars = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        if write_mode && typing_handle.is_some() {
-            // Use the typing thread for loader animation instead of separate Enigo instance
-            let handle = typing_handle.as_ref().unwrap();
-            let cancel_flag = std::sync::Arc::clone(&spinner_cancel);
-            let handle_clone = handle.clone();
-            
-            spinner_handle = Some(tokio::spawn(async move {
-                let mut dots = 0;
-                
-                while !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    // Add dots (up to 3)
-                    while dots < 3 && !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        if let Err(_) = handle_clone.update_preview(".".repeat(dots + 1)).await {
-                            return;
-                        }
-                        dots += 1;
-                        tokio::time::sleep(std::time::Duration::from_millis(90)).await;
-                    }
-                    
-                    // Remove dots
-                    while dots > 0 && !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        dots -= 1;
-                        if let Err(_) = handle_clone.update_preview(".".repeat(dots)).await {
-                            return;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(90)).await;
-                    }
-                }
-                
-                // Clean up - clear all dots
-                let _ = handle_clone.update_preview(String::new()).await;
-            }));
-        }
+        // Disable loader for now since it interferes with keyboard
+        // TODO: Implement proper loader that doesn't conflict with final typing
 
         // Process audio
         let processed_audio = self

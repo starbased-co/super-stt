@@ -548,12 +548,12 @@ impl Typer {
             let batch = remaining.min(batch_size);
             for _ in 0..batch {
                 let _ = enigo.key(enigo::Key::Backspace, enigo::Direction::Click);
-                std::thread::sleep(std::time::Duration::from_millis(25));
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
             remaining -= batch;
 
             if remaining > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                std::thread::sleep(std::time::Duration::from_millis(20));
             }
         }
 
