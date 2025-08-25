@@ -123,7 +123,7 @@ impl SuperSTTDaemon {
             "🎯 Perfect sequence completed: GPU preview finish → clear → loader → GPU final → type final"
         );
 
-        Ok((transcription_result))
+        Ok(transcription_result)
     }
 
     /// Record audio and stream to preview session
