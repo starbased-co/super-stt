@@ -78,38 +78,116 @@ impl SuperSTTDaemon {
         // Set up recording state and create recorder
         let mut recorder = self.setup_recording_session(write_mode).await?;
 
+        // Get model processing interval from current model type
+        let model_processing_interval = {
+            let model_type_guard = self.model_type.read().await;
+            if let Some(model_type) = model_type_guard.as_ref() {
+                model_type.get_processing_interval()
+            } else {
+                // Default interval if no model loaded
+                std::time::Duration::from_millis(2000)
+            }
+        };
+
         let actually_typed = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
 
-        let mut start_time = Instant::now();
-        while recorder.still_recording {
+        // Get a reference to the recorder's internal audio buffer for direct preview access
+        let preview_buffer = recorder.get_audio_buffer_ref();
+
+        // Start the recorder in its own thread
+        let recorder_handle = tokio::spawn({
+            let udp_streamer = Arc::clone(&self.udp_streamer);
+            async move {
+                recorder
+                    .record_until_silence_with_streaming(udp_streamer, None)
+                    .await
+            }
+        });
+
+        let start_time = Instant::now();
+
+        // Main transcription loop - process audio chunks while recording
+        loop {
+            debug!("Starting transcription loop");
+            debug!(
+                "Model processing interval: {:?}",
+                model_processing_interval.as_millis()
+            );
             // Sleep until model processing interval has been reached
-            // We need to get from STTModel::get_processing_interval()
             tokio::time::sleep(model_processing_interval).await;
 
-            // Ask recorder thread for last 10 seconds of audio data
-            let audio_data = recorder.get_last_10_seconds().await?;
+            // Check if recorder is still active
+            if recorder_handle.is_finished() {
+                break;
+            }
 
-            // Transcribe audio data using STTModel
-            let text = stt_model.transcribe(audio_data).await?;
-
-            if write_mode {
-                if let Ok(mut actually_typed) = actually_typed.lock() {
-                    typer.update_preview(&text, &mut actually_typed);
+            // Get last 10 seconds of audio data directly from buffer for preview
+            debug!("About to get 10 secs from buffer");
+            let audio_data = {
+                let buffer_guard = match preview_buffer.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => {
+                        debug!("Buffer lock poisoned, recovering");
+                        poisoned.into_inner()
+                    }
+                };
+                
+                // Calculate how many samples represent 10 seconds at 16kHz
+                let samples_per_10_seconds = 16000 * 10;
+                let total_samples = buffer_guard.len();
+                
+                if total_samples == 0 {
+                    Vec::new()
+                } else {
+                    let start_idx = if total_samples > samples_per_10_seconds {
+                        total_samples - samples_per_10_seconds
+                    } else {
+                        0
+                    };
+                    buffer_guard.range(start_idx..).copied().collect::<Vec<f32>>()
                 }
+            };
+            
+            debug!("Got {} audio samples for preview", audio_data.len());
+            if !audio_data.is_empty() {
+                // Transcribe audio data using current model
+                debug!("Starting preview transcription");
+                if let Ok(text) = self.transcribe_audio_chunk(&audio_data).await {
+                    if write_mode && !text.trim().is_empty() {
+                        info!("Updating preview with text: '{}'", text.chars().take(30).collect::<String>());
+                        if let Ok(mut actually_typed_guard) = actually_typed.lock() {
+                            typer.update_preview(&text, &mut actually_typed_guard);
+                        }
+                    }
+                }
+            } else {
+                debug!("No audio data available for preview yet");
+            }
+
+            // Prevent infinite loops with a reasonable timeout
+            if start_time.elapsed() > std::time::Duration::from_secs(60) {
+                warn!("Recording timeout reached, stopping preview loop");
+                break;
             }
         }
+
         info!("Step 1 complete: Preview has finished");
 
+        // Wait for recorder to finish and get full audio data
+        let full_audio_data = recorder_handle.await??;
+
         // Clear preview after recording is done
-        if let Ok(mut actually_typed) = actually_typed.lock() {
-            typer.clear_preview(&mut actually_typed);
+        if write_mode {
+            if let Ok(mut actually_typed_guard) = actually_typed.lock() {
+                typer.clear_preview(&mut actually_typed_guard);
+            }
         }
         info!("Step 2 complete: Preview has been cleared");
 
         // STEP 3: Loader start + STEP 4: GPU final transcription + STEP 5: Loader end
         info!("Step 3-5: Starting loader, running GPU final transcription, stopping loader");
         let transcription_result = self
-            .transcribe_with_spinner(typer, &recorder.get_full_audio_data(), write_mode)
+            .transcribe_with_spinner(typer, &full_audio_data, write_mode)
             .await?;
         info!("Step 3-5 complete: Final GPU transcription finished");
 
@@ -118,6 +196,13 @@ impl SuperSTTDaemon {
             typer.process_final_text(&transcription_result);
         }
         info!("Step 6 complete: Final transcription typed successfully");
+
+        // Finalize recording session
+        self.finalize_recording_session(
+            &transcription_result,
+            &std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        )
+        .await;
 
         info!(
             "🎯 Perfect sequence completed: GPU preview finish → clear → loader → GPU final → type final"
@@ -153,6 +238,42 @@ impl SuperSTTDaemon {
             .await
     }
 
+    /// Transcribe a chunk of audio data for preview
+    async fn transcribe_audio_chunk(&self, audio_data: &[f32]) -> Result<String> {
+        // Process audio
+        let processed_audio = self
+            .audio_processor
+            .process_audio(audio_data, 16000)
+            .context("Failed to process audio chunk")?;
+
+        // Clone the model Arc for the blocking task
+        let model_clone = Arc::clone(&self.model);
+
+        // Run transcription in a blocking task to avoid blocking the async runtime
+        let result = tokio::task::spawn_blocking(move || {
+            // Get exclusive write access to the model
+            let mut model_guard = model_clone.blocking_write();
+
+            if let Some(model) = model_guard.as_mut() {
+                match model.transcribe_audio(&processed_audio, 16000) {
+                    Ok(text) => Ok(text) as Result<String>,
+                    Err(e) => {
+                        // For preview transcription errors, return empty string instead of failing
+                        warn!("Preview transcription failed, continuing: {e}");
+                        Ok(String::new()) as Result<String>
+                    }
+                }
+            } else {
+                warn!("Model not loaded for preview transcription");
+                Ok(String::new()) as Result<String>
+            }
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Preview transcription task failed: {}", e))??;
+
+        Ok(result)
+    }
+
     /// Set up recording state and create audio recorder
     async fn setup_recording_session(&self, write_mode: bool) -> Result<DaemonAudioRecorder> {
         // Double-check recording state and set atomically
@@ -174,8 +295,13 @@ impl SuperSTTDaemon {
 
         // Create audio recorder with current theme
         let current_theme = self.get_audio_theme();
-        DaemonAudioRecorder::new_with_theme(current_theme)
-            .context("Failed to create audio recorder")
+        let mut recorder = DaemonAudioRecorder::new_with_theme(current_theme)
+            .context("Failed to create audio recorder")?;
+
+        // Initialize the recorder for threaded operation
+        recorder.prepare_for_threaded_recording();
+
+        Ok(recorder)
     }
 
     /// Emit D-Bus listening started event
@@ -212,16 +338,16 @@ impl SuperSTTDaemon {
     /// Transcribe audio with spinner if needed
     async fn transcribe_with_spinner(
         &self,
-        typer: &mut Typer,
+        _typer: &mut Typer,
         audio_data: &[f32],
-        write_mode: bool,
+        _write_mode: bool,
     ) -> Result<String> {
         // If we'll type the result, show a simple spinner by typing characters and backspacing
         // This indicates work while transcription runs.
         let mut spinner_handle: Option<tokio::task::JoinHandle<()>> = None;
         let spinner_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         // Track how many temporary spinner characters are visible (0-3)
-        let visible_temp_chars = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _visible_temp_chars = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         // Disable loader for now since it interferes with keyboard
         // TODO: Implement proper loader that doesn't conflict with final typing
 

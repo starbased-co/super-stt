@@ -458,6 +458,85 @@ impl DaemonAudioRecorder {
         let config = self.get_optimal_config(&device)?;
         Ok(config.config().sample_rate.0)
     }
+
+    /// Prepare recorder for threaded operation - initializes any threaded state
+    pub fn prepare_for_threaded_recording(&mut self) {
+        // Initialize any threaded state here if needed in the future
+        // For now, the recorder is already set up for async operation
+    }
+
+    /// Get the last 10 seconds of audio data for preview transcription
+    /// This method provides access to recent audio without interrupting the recording
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the audio buffer cannot be accessed
+    pub async fn get_last_10_seconds(&self) -> Result<Vec<f32>> {
+        let buffer = match self.audio_buffer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::warn!("Audio buffer lock was poisoned during get_last_10_seconds, attempting recovery");
+                poisoned.into_inner()
+            }
+        };
+
+        // Calculate how many samples represent 10 seconds
+        let samples_per_10_seconds = (self.sample_rate * 10) as usize;
+        
+        // Get the last N samples from the buffer
+        let total_samples = buffer.len();
+        if total_samples == 0 {
+            return Ok(Vec::new());
+        }
+
+        let start_idx = if total_samples > samples_per_10_seconds {
+            total_samples - samples_per_10_seconds
+        } else {
+            0
+        };
+
+        let samples: Vec<f32> = buffer.range(start_idx..).copied().collect();
+        Ok(samples)
+    }
+
+    /// Get all recorded audio data - this should be called after recording is complete
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the audio buffer cannot be accessed
+    pub fn get_full_audio_data(&self) -> Result<Vec<f32>> {
+        let buffer = match self.audio_buffer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::warn!("Audio buffer lock was poisoned during get_full_audio_data, attempting recovery");
+                poisoned.into_inner()
+            }
+        };
+
+        let audio_data: Vec<f32> = buffer.iter().copied().collect();
+        Ok(audio_data)
+    }
+
+    /// Check if the recorder is still actively recording
+    /// This checks the internal recording state
+    #[must_use]
+    pub fn is_still_recording(&self) -> bool {
+        match self.recording_state.lock() {
+            Ok(state) => !state.should_stop(),
+            Err(poisoned) => {
+                log::warn!("Recording state lock was poisoned during is_still_recording check, attempting recovery");
+                let state = poisoned.into_inner();
+                !state.should_stop()
+            }
+        }
+    }
+
+    /// Get a reference to the internal audio buffer for direct access during recording
+    /// This allows preview functionality to access the buffer without blocking the recording thread
+    #[must_use]
+    pub fn get_audio_buffer_ref(&self) -> Arc<Mutex<VecDeque<f32>>> {
+        Arc::clone(&self.audio_buffer)
+    }
 }
 trait PipeExt<T> {
     fn pipe<F, U>(self, f: F) -> U

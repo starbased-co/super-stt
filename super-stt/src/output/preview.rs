@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use log::{debug, info, warn};
-use std::sync::{Arc, atomic::AtomicUsize};
-
 use crate::output::keyboard::Simulator;
+use log::{debug, info, warn};
 
 /// State for tracking preview updates
 pub struct State {
@@ -97,7 +95,7 @@ impl Typer {
 
     /// Find common prefix between two strings
     #[must_use]
-    pub fn find_common_prefix(text1: &str, text2: &str) -> usize {
+    fn find_common_prefix(text1: &str, text2: &str) -> usize {
         text1
             .chars()
             .zip(text2.chars())
@@ -112,13 +110,10 @@ impl Typer {
             return 0;
         }
 
-        if old_text.is_empty() {
-            if !new_text.is_empty() {
-                self.keyboard_simulator.type_text(new_text);
-                debug!("Failed to type new text");
-                return 0;
-            }
-            return 0;
+        if old_text.is_empty() && !new_text.is_empty() {
+            let _ = self.keyboard_simulator.type_text(new_text);
+            debug!("Failed to type new text");
+            return new_text.len();
         }
 
         if new_text.is_empty() {
@@ -144,7 +139,7 @@ impl Typer {
         );
 
         // Backspace to the first different position
-        self.keyboard_simulator.backspace_n(chars_to_delete);
+        let _ = self.keyboard_simulator.backspace_n(chars_to_delete);
 
         // Type the new part
         let _ = self.keyboard_simulator.type_text(&text_to_type);
@@ -398,7 +393,7 @@ impl Typer {
 
         // Screen is empty, just type the new text
         if old_char_count == 0 {
-            self.keyboard_simulator.type_text(&format!("{new_text} "));
+            let _ = self.keyboard_simulator.type_text(&format!("{new_text} "));
         }
         // Screen is not empty, check if new text starts with actually typed text
         else if new_text.starts_with(actually_typed.as_str())
@@ -406,7 +401,7 @@ impl Typer {
         {
             // Perfect extension - just add the suffix
             let suffix = format!("{} ", &new_text[actually_typed.len()..]);
-            self.keyboard_simulator.type_text(&suffix);
+            let _ = self.keyboard_simulator.type_text(&suffix);
         } else {
             // Need to replace - use differential update
             let net_change = self.apply_simple_diff(actually_typed, new_text);
@@ -417,7 +412,7 @@ impl Typer {
 
             info!(
                 "Replaced: {}{} chars (screen total: {})",
-                if net_change >= 0 { "+" } else { "" },
+                if net_change > 0 { "+" } else { "" },
                 net_change,
                 actual_chars_on_screen
             );
@@ -469,10 +464,10 @@ impl Typer {
 
         // Erase preview in batches
         if preview_chars > 0 {
-            self.keyboard_simulator.backspace_n(preview_chars);
+            let _ = self.keyboard_simulator.backspace_n(preview_chars);
         }
 
-        self.keyboard_simulator.type_text(&text_to_type);
+        let _ = self.keyboard_simulator.type_text(&text_to_type);
     }
 }
 
