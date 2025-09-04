@@ -68,6 +68,7 @@ impl SuperSTTDaemon {
     /// # Panics
     ///
     /// Panics if internal locks (e.g., audio theme or buffers) are poisoned.
+    #[allow(clippy::too_many_lines)]
     pub async fn record_and_transcribe(
         &self,
         typer: &mut Typer,
@@ -96,7 +97,6 @@ impl SuperSTTDaemon {
 
         // Detect the actual device sample rate for correct buffer calculations
         let device_sample_rate = recorder.detect_default_input_sample_rate().unwrap_or(16000); // fallback to 16kHz if detection fails
-        debug!("Detected device sample rate: {} Hz", device_sample_rate);
 
         // Start the recorder in its own thread
         let recorder_handle = tokio::spawn({
@@ -137,7 +137,6 @@ impl SuperSTTDaemon {
                 };
 
                 let total_samples = buffer_guard.len();
-                debug!("Total samples in buffer: {}", total_samples);
 
                 if total_samples == 0 {
                     Vec::new()
@@ -158,12 +157,6 @@ impl SuperSTTDaemon {
 
                     // Basic audio validation - check if we have reasonable audio levels
                     let max_amplitude = samples.iter().map(|&x| x.abs()).fold(0.0, f32::max);
-                    let avg_amplitude =
-                        samples.iter().map(|&x| x.abs()).sum::<f32>() / samples.len() as f32;
-                    debug!(
-                        "Audio stats: max_amp={:.4}, avg_amp={:.4}",
-                        max_amplitude, avg_amplitude
-                    );
 
                     if max_amplitude < 0.001 {
                         debug!("Audio appears to be mostly silence, skipping transcription");
@@ -183,11 +176,11 @@ impl SuperSTTDaemon {
 
             if !audio_data.is_empty() && write_mode && preview_enabled {
                 // Resample to 16kHz if needed (same as final recording does)
-                let resampled_audio = if device_sample_rate != 16000 {
-                    debug!(
-                        "Resampling from {}Hz to 16kHz for preview",
-                        device_sample_rate
-                    );
+                let resampled_audio = if device_sample_rate == 16000 {
+                    debug!("No resampling needed, device already at 16kHz");
+                    audio_data
+                } else {
+                    debug!("Resampling from {device_sample_rate}Hz to 16kHz for preview");
                     match super_stt_shared::utils::audio::resample(
                         &audio_data,
                         device_sample_rate,
@@ -207,9 +200,6 @@ impl SuperSTTDaemon {
                             continue; // Skip this preview iteration
                         }
                     }
-                } else {
-                    debug!("No resampling needed, device already at 16kHz");
-                    audio_data
                 };
 
                 // Transcribe resampled audio data using current model
@@ -217,15 +207,15 @@ impl SuperSTTDaemon {
                     "Starting preview transcription with {} samples",
                     resampled_audio.len()
                 );
-                if let Ok(text) = self.transcribe_audio_chunk(&resampled_audio).await {
-                    if !text.trim().is_empty() {
-                        info!(
-                            "Updating preview with text: '{}'",
-                            text.chars().take(30).collect::<String>()
-                        );
-                        if let Ok(mut actually_typed_guard) = actually_typed.lock() {
-                            typer.update_preview(&text, &mut actually_typed_guard);
-                        }
+                if let Ok(text) = self.transcribe_audio_chunk(&resampled_audio).await
+                    && !text.trim().is_empty()
+                {
+                    info!(
+                        "Updating preview with text: '{}'",
+                        text.chars().take(30).collect::<String>()
+                    );
+                    if let Ok(mut actually_typed_guard) = actually_typed.lock() {
+                        typer.update_preview(&text, &mut actually_typed_guard);
                     }
                 }
             } else if !preview_enabled {
@@ -258,10 +248,7 @@ impl SuperSTTDaemon {
                         actually_typed_guard.chars().take(50).collect::<String>()
                     );
                     typer.clear_preview(&mut actually_typed_guard);
-                    info!(
-                        "Preview cleared, actually_typed is now: '{}'",
-                        actually_typed_guard
-                    );
+                    info!("Preview cleared, actually_typed is now: '{actually_typed_guard}'");
                 } else {
                     warn!("Failed to acquire actually_typed lock for clearing preview");
                 }
@@ -296,33 +283,6 @@ impl SuperSTTDaemon {
         );
 
         Ok(transcription_result)
-    }
-
-    /// Record audio and stream to preview session
-    async fn record_with_preview_streaming(
-        &self,
-        recorder: &mut DaemonAudioRecorder,
-        session_id: &str,
-    ) -> Result<Vec<f32>> {
-        // Create channel to send audio to preview transcription
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<f32>, u32)>();
-
-        // Spawn task to forward audio to realtime manager
-        let manager = Arc::clone(&self.realtime_manager);
-        let session_id = session_id.to_string();
-        let _forwarder = tokio::spawn(async move {
-            while let Some((samples, sr)) = rx.recv().await {
-                if let Err(e) = manager.process_audio_chunk(&session_id, samples, sr).await {
-                    debug!("Preview audio processing failed: {e}");
-                    break;
-                }
-            }
-        });
-
-        // Record audio with preview streaming
-        recorder
-            .record_until_silence_with_streaming(Arc::clone(&self.udp_streamer), Some(tx))
-            .await
     }
 
     /// Transcribe a chunk of audio data for preview

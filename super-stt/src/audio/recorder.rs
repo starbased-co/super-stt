@@ -465,42 +465,6 @@ impl DaemonAudioRecorder {
         // For now, the recorder is already set up for async operation
     }
 
-    /// Get the last 10 seconds of audio data for preview transcription
-    /// This method provides access to recent audio without interrupting the recording
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the audio buffer cannot be accessed
-    pub async fn get_last_10_seconds(&self) -> Result<Vec<f32>> {
-        let buffer = match self.audio_buffer.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                log::warn!(
-                    "Audio buffer lock was poisoned during get_last_10_seconds, attempting recovery"
-                );
-                poisoned.into_inner()
-            }
-        };
-
-        // Calculate how many samples represent 10 seconds
-        let samples_per_10_seconds = (self.sample_rate * 10) as usize;
-
-        // Get the last N samples from the buffer
-        let total_samples = buffer.len();
-        if total_samples == 0 {
-            return Ok(Vec::new());
-        }
-
-        let start_idx = if total_samples > samples_per_10_seconds {
-            total_samples - samples_per_10_seconds
-        } else {
-            0
-        };
-
-        let samples: Vec<f32> = buffer.range(start_idx..).copied().collect();
-        Ok(samples)
-    }
-
     /// Get all recorded audio data - this should be called after recording is complete
     ///
     /// # Errors

@@ -31,18 +31,10 @@ impl Default for State {
 }
 
 /// Unified, simplified preview typer that combines the best of both approaches
+#[derive(Default)]
 pub struct Typer {
     keyboard_simulator: Simulator,
     state: State,
-}
-
-impl Default for Typer {
-    fn default() -> Self {
-        Self {
-            keyboard_simulator: Simulator::default(),
-            state: State::default(),
-        }
-    }
 }
 
 impl Typer {
@@ -374,7 +366,7 @@ impl Typer {
     pub fn process_final_text(&mut self, transcription_result: &str) {
         // No preview typing, type directly
         let processed_text =
-            crate::output::preview::Typer::preprocess_text(&transcription_result, false);
+            crate::output::preview::Typer::preprocess_text(transcription_result, false);
         let final_text = format!("{processed_text} ");
         if let Err(e) = self.keyboard_simulator.type_text(&final_text) {
             warn!("Failed to type final transcription: {e}");
@@ -404,7 +396,6 @@ impl Typer {
     fn apply_text_update(&mut self, new_text: &str, actually_typed: &mut String) {
         let old_char_count = actually_typed.chars().count();
         let new_char_count = new_text.chars().count();
-        let mut actual_chars_on_screen = old_char_count;
 
         info!(
             "Typing logic: old_typed='{}', new_display='{}', old_count={}, new_count={}",
@@ -414,6 +405,7 @@ impl Typer {
             new_char_count
         );
 
+        let actual_chars_on_screen;
         // Screen is empty, just type the new text
         if old_char_count == 0 {
             info!(
@@ -429,7 +421,7 @@ impl Typer {
         {
             // Perfect extension - just add the suffix
             let suffix = &new_text[actually_typed.len()..];
-            info!("Perfect extension, adding suffix: '{}'", suffix);
+            info!("Perfect extension, adding suffix: '{suffix}'");
             let _ = self.keyboard_simulator.type_text(&format!("{suffix} "));
             actual_chars_on_screen = new_char_count;
         } else {
@@ -439,7 +431,7 @@ impl Typer {
 
             // Calculate actual characters on screen based on the net change
             let new_count = old_char_count + net_change;
-            actual_chars_on_screen = usize::try_from(new_count.max(0)).unwrap_or_default();
+            actual_chars_on_screen = new_count.max(0);
 
             info!(
                 "Replaced: {}{} chars (screen total: {})",
@@ -475,10 +467,7 @@ impl Typer {
 
     /// Clear all typed text and reset state
     pub fn clear_preview(&mut self, actually_typed: &mut String) {
-        info!(
-            "clear_preview called with actually_typed: '{}'",
-            actually_typed
-        );
+        info!("clear_preview called with actually_typed: '{actually_typed}'");
 
         if actually_typed.is_empty() {
             info!("actually_typed is empty, nothing to clear");
@@ -486,12 +475,12 @@ impl Typer {
         }
 
         let chars_to_delete = actually_typed.chars().count();
-        info!("Backspacing {} characters", chars_to_delete);
+        info!("Backspacing {chars_to_delete} characters");
 
         if let Err(e) = self.keyboard_simulator.backspace_n(chars_to_delete) {
             warn!("Failed to backspace preview text: {e}");
         } else {
-            info!("Successfully backspaced {} characters", chars_to_delete);
+            info!("Successfully backspaced {chars_to_delete} characters");
         }
 
         actually_typed.clear();
@@ -502,7 +491,7 @@ impl Typer {
         self.state.full_session_text.clear();
         self.state.last_growth_time = std::time::Instant::now();
 
-        info!("Cleared all {} characters and reset state", chars_to_delete);
+        info!("Cleared all {chars_to_delete} characters and reset state");
     }
 
     /// In a single input session, backspace preview chars then type final text
