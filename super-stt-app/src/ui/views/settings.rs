@@ -10,6 +10,25 @@ use super_stt_shared::{models::protocol::DownloadProgress, stt_model::STTModel};
 use super::common::page_layout;
 use crate::ui::messages::Message;
 
+/// Preview typing settings section using cosmic-settings style
+pub fn preview_typing_settings_widget(preview_typing_enabled: bool) -> Element<'static, Message> {
+    let mut section = settings::section().title("Preview Typing (Beta)");
+
+    // Add description text as a separate item
+    section = section.add(settings::item(
+        "",
+        text::caption("Preview typing shows transcription results as you speak. This is an experimental feature and may affect performance.")
+    ));
+
+    // Add the toggler control
+    section = section.add(settings::item(
+        "Enable Preview Typing",
+        cosmic::widget::toggler(preview_typing_enabled).on_toggle(Message::PreviewTypingToggled),
+    ));
+
+    section.into()
+}
+
 /// Audio themes page view using cosmic-settings style
 pub fn audio_theme_selection_widget<'a>(
     audio_themes: &'a [AudioTheme],
@@ -255,6 +274,7 @@ pub fn page<'a>(
     current_device: &'a str,
     available_devices: &'a [String],
     device_switching: bool,
+    preview_typing_enabled: bool,
 ) -> Element<'a, Message> {
     let mut sections = Vec::new();
 
@@ -262,6 +282,9 @@ pub fn page<'a>(
         audio_themes,
         selected_audio_theme,
     ));
+
+    // Add preview typing section
+    sections.push(preview_typing_settings_widget(preview_typing_enabled));
 
     // Download Progress Section (only if active)
     if let Some(progress_widget) = download_progress_widget(download_progress, download_active) {

@@ -287,27 +287,13 @@ impl ResourceManager {
         let conn_info = ConnectionInfo::new(client_id.clone(), client_addr);
         connections.insert(client_id.clone(), conn_info);
 
-        debug!(
-            "Registered connection: {} ({}/{})",
-            client_id,
-            connections.len(),
-            self.limits.max_connections
-        );
-
         Ok(())
     }
 
     /// Unregister a connection
     pub async fn unregister_connection(&self, client_id: &str) {
         let mut connections = self.connections.write().await;
-        if connections.remove(client_id).is_some() {
-            debug!(
-                "Unregistered connection: {} ({}/{})",
-                client_id,
-                connections.len(),
-                self.limits.max_connections
-            );
-        }
+        let _ = connections.remove(client_id).is_some();
     }
 
     /// Record a request and check rate limits
