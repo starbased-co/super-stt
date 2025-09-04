@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use enigo::{Enigo, Keyboard};
-use log::{debug, info};
-use std::sync::{Arc, atomic::AtomicUsize};
-
-/// Unified, simplified preview typer that combines the best of both approaches
-pub struct Typer;
+use crate::output::keyboard::Simulator;
+use log::{debug, info, warn};
 
 /// State for tracking preview updates
 pub struct State {
@@ -32,6 +28,13 @@ impl Default for State {
             stabilized_text: String::new(),
         }
     }
+}
+
+/// Unified, simplified preview typer that combines the best of both approaches
+#[derive(Default)]
+pub struct Typer {
+    keyboard_simulator: Simulator,
+    state: State,
 }
 
 impl Typer {
@@ -84,7 +87,7 @@ impl Typer {
 
     /// Find common prefix between two strings
     #[must_use]
-    pub fn find_common_prefix(text1: &str, text2: &str) -> usize {
+    fn find_common_prefix(text1: &str, text2: &str) -> usize {
         text1
             .chars()
             .zip(text2.chars())
@@ -93,35 +96,21 @@ impl Typer {
     }
 
     /// Apply a simple differential update by backspacing and retyping from first difference
-    pub fn apply_simple_diff(
-        enigo: &mut Enigo,
-        old_text: &str,
-        new_text: &str,
-        cancellation_token: &tokio_util::sync::CancellationToken,
-    ) -> i32 {
+    pub fn apply_simple_diff(&mut self, old_text: &str, new_text: &str) -> usize {
         // Safety checks
         if old_text == new_text {
             return 0;
         }
 
-        if old_text.is_empty() {
-            if !new_text.is_empty() {
-                let _ = enigo.text(new_text);
-                debug!("Typed new text: {} chars", new_text.chars().count());
-            }
-            return i32::try_from(new_text.chars().count()).unwrap_or_default();
+        if old_text.is_empty() && !new_text.is_empty() {
+            let _ = self.keyboard_simulator.type_text(new_text);
+            debug!("Failed to type new text");
+            return new_text.len();
         }
 
         if new_text.is_empty() {
-            let chars_to_delete = old_text.chars().count();
-            for _ in 0..chars_to_delete {
-                if cancellation_token.is_cancelled() {
-                    return 0;
-                }
-                let _ = enigo.key(enigo::Key::Backspace, enigo::Direction::Click);
-            }
-            debug!("Cleared all {chars_to_delete} chars");
-            return -i32::try_from(chars_to_delete).unwrap_or_default();
+            // Skip
+            return 0;
         }
 
         let old_chars: Vec<char> = old_text.chars().collect();
@@ -142,42 +131,27 @@ impl Typer {
         );
 
         // Backspace to the first different position
-        for i in 0..chars_to_delete {
-            if cancellation_token.is_cancelled() {
-                debug!("Cancelled during backspace at {i}/{chars_to_delete}");
-                return 0;
-            }
-            let _ = enigo.key(enigo::Key::Backspace, enigo::Direction::Click);
-        }
+        let _ = self.keyboard_simulator.backspace_n(chars_to_delete);
 
         // Type the new part
-        if !text_to_type.is_empty() {
-            let _ = enigo.text(&text_to_type);
-            debug!(
-                "Typed new text: '{}'",
-                text_to_type.chars().take(20).collect::<String>()
-            );
-        }
+        let _ = self.keyboard_simulator.type_text(&text_to_type);
 
-        let net_change = i32::try_from(text_to_type.chars().count()).unwrap_or_default()
-            - i32::try_from(chars_to_delete).unwrap_or_default();
-        debug!("Net change: {net_change}");
-        net_change
+        text_to_type.len()
     }
 
     /// Update preview text using two-phase approach
-    pub fn update_preview(
-        enigo: &mut Enigo,
-        new_text: &str,
-        actually_typed: &mut String,
-        typed_counter: &Arc<AtomicUsize>,
-        state: &mut State,
-        cancellation_token: &tokio_util::sync::CancellationToken,
-    ) {
+    pub fn update_preview(&mut self, new_text: &str, actually_typed: &mut String) {
         let processed_text = Self::preprocess_text(new_text, true);
 
+        info!(
+            "Preview update: new='{}', prev='{}', typed='{}'",
+            processed_text.chars().take(30).collect::<String>(),
+            self.state.prev_text.chars().take(30).collect::<String>(),
+            actually_typed.chars().take(30).collect::<String>()
+        );
+
         // Skip if text hasn't changed
-        if processed_text == state.prev_text {
+        if processed_text == self.state.prev_text {
             debug!("Text unchanged, skipping");
             return;
         }
@@ -189,114 +163,136 @@ impl Typer {
         }
 
         // PHASE 1: Stabilization and session text update
-        Self::update_with_stabilization(state, &processed_text);
+        self.update_with_stabilization(&processed_text);
 
         // PHASE 2: Decide what to show on screen
-        let display_text = Self::build_display_text(state, &processed_text);
+        let display_text = self.build_display_text(&processed_text);
 
-        debug!(
-            "Display text: '{}' (session: {} chars, preview: {} chars)",
-            display_text.chars().take(50).collect::<String>(),
-            state.full_session_text.chars().count(),
-            processed_text.chars().count()
+        info!(
+            "Display logic: display='{}', session='{}', stabilized='{}'",
+            display_text.chars().take(30).collect::<String>(),
+            self.state
+                .full_session_text
+                .chars()
+                .take(30)
+                .collect::<String>(),
+            self.state
+                .stabilized_text
+                .chars()
+                .take(30)
+                .collect::<String>()
         );
 
         // Apply the update to screen
-        Self::apply_text_update(
-            enigo,
-            &display_text,
-            actually_typed,
-            typed_counter,
-            cancellation_token,
-        );
-        state.prev_text = processed_text;
+        self.apply_text_update(&display_text, actually_typed);
+        self.state.prev_text = processed_text;
     }
 
     /// Stabilization and session text update (Phase 1)
-    fn update_with_stabilization(state: &mut State, new_preview_text: &str) {
+    fn update_with_stabilization(&mut self, new_preview_text: &str) {
         // Add current text to storage
-        state.text_storage.push(new_preview_text.to_string());
+        self.state.text_storage.push(new_preview_text.to_string());
 
         // Keep only recent texts for stabilization (prevent unbounded growth)
-        if state.text_storage.len() > 10 {
-            state.text_storage.remove(0);
+        if self.state.text_storage.len() > 10 {
+            self.state.text_storage.remove(0);
         }
 
         // Find common prefix between last two texts
-        if state.text_storage.len() >= 2 {
-            let last_two = &state.text_storage[state.text_storage.len() - 2..];
+        if self.state.text_storage.len() >= 2 {
+            let last_two = &self.state.text_storage[self.state.text_storage.len() - 2..];
             let common_prefix = Self::find_common_prefix(&last_two[0], &last_two[1]);
             let prefix_text = last_two[0].chars().take(common_prefix).collect::<String>();
 
             // Only update stabilized text if we found a longer stable prefix
-            if prefix_text.len() > state.stabilized_text.len() {
-                state.stabilized_text = prefix_text;
+            if prefix_text.len() > self.state.stabilized_text.len() {
+                self.state.stabilized_text = prefix_text;
                 debug!(
                     "Updated stabilized text: '{}'",
-                    state.stabilized_text.chars().take(30).collect::<String>()
+                    self.state
+                        .stabilized_text
+                        .chars()
+                        .take(30)
+                        .collect::<String>()
                 );
             }
         }
 
         // Update full session text using stabilized text + tail matching
-        Self::update_full_session_text(state, new_preview_text);
+        self.update_full_session_text(new_preview_text);
     }
 
     /// Update the full session text using stabilized text as base
     #[allow(clippy::cast_sign_loss)]
-    fn update_full_session_text(state: &mut State, new_preview_text: &str) {
+    fn update_full_session_text(&mut self, new_preview_text: &str) {
         // If we have stabilized text, use it as our base
-        if !state.stabilized_text.is_empty()
-            && state.stabilized_text.len() > state.full_session_text.len()
+        if !self.state.stabilized_text.is_empty()
+            && self.state.stabilized_text.len() > self.state.full_session_text.len()
         {
-            state.full_session_text = state.stabilized_text.clone();
-            state.last_growth_time = std::time::Instant::now();
+            self.state.full_session_text = self.state.stabilized_text.clone();
+            self.state.last_growth_time = std::time::Instant::now();
             debug!(
                 "Updated session from stabilized: '{}'",
-                state.full_session_text.chars().take(30).collect::<String>()
+                self.state
+                    .full_session_text
+                    .chars()
+                    .take(30)
+                    .collect::<String>()
             );
         }
 
         // Only grow the session text, never shrink it
-        if state.full_session_text.is_empty() {
-            state.full_session_text = new_preview_text.to_string();
-            state.last_growth_time = std::time::Instant::now();
+        if self.state.full_session_text.is_empty() {
+            self.state.full_session_text = new_preview_text.to_string();
+            self.state.last_growth_time = std::time::Instant::now();
             debug!(
                 "Started session text: '{}'",
-                state.full_session_text.chars().take(30).collect::<String>()
+                self.state
+                    .full_session_text
+                    .chars()
+                    .take(30)
+                    .collect::<String>()
             );
             return;
         }
 
         // Check if preview text extends our session text
-        if new_preview_text.len() > state.full_session_text.len()
-            && new_preview_text.starts_with(&state.full_session_text)
+        if new_preview_text.len() > self.state.full_session_text.len()
+            && new_preview_text.starts_with(&self.state.full_session_text)
         {
             // Perfect extension - just grow
-            state.full_session_text = new_preview_text.to_string();
-            state.last_growth_time = std::time::Instant::now();
+            self.state.full_session_text = new_preview_text.to_string();
+            self.state.last_growth_time = std::time::Instant::now();
             debug!(
                 "Extended session text to: '{}'",
-                state.full_session_text.chars().take(40).collect::<String>()
+                self.state
+                    .full_session_text
+                    .chars()
+                    .take(40)
+                    .collect::<String>()
             );
             return;
         }
 
         // Use tail matching to extend session with new content
         let matching_pos =
-            Self::find_tail_match_in_text(&state.full_session_text, new_preview_text, 3);
+            Self::find_tail_match_in_text(&self.state.full_session_text, new_preview_text, 3);
         if matching_pos >= 0 {
             let extended = format!(
                 "{}{}",
-                state.full_session_text,
+                self.state.full_session_text,
                 &new_preview_text[matching_pos as usize..]
             );
-            if extended.len() > state.full_session_text.len() {
-                state.full_session_text = extended;
-                state.last_growth_time = std::time::Instant::now();
+            if extended.len() > self.state.full_session_text.len() {
+                self.state.full_session_text = extended;
+                self.state.last_growth_time = std::time::Instant::now();
                 debug!(
                     "Extended session via tail match: '{}'",
-                    state.full_session_text.chars().take(40).collect::<String>()
+                    self.state
+                        .full_session_text
+                        .chars()
+                        .take(40)
+                        .collect::<String>()
                 );
             }
         }
@@ -304,22 +300,23 @@ impl Typer {
 
     /// Build the display text (Phase 2) - what actually shows on screen
     #[allow(clippy::cast_sign_loss)]
-    fn build_display_text(state: &State, preview_text: &str) -> String {
+    fn build_display_text(&mut self, preview_text: &str) -> String {
         // Use stabilized text as base, but be smart about it
 
         // If no stabilized text yet, show the preview
-        if state.stabilized_text.is_empty() {
+        if self.state.stabilized_text.is_empty() {
             return preview_text.to_string();
         }
 
         // Try tail matching first
-        let matching_pos = Self::find_tail_match_in_text(&state.stabilized_text, preview_text, 3);
+        let matching_pos =
+            Self::find_tail_match_in_text(&self.state.stabilized_text, preview_text, 3);
 
         if matching_pos >= 0 {
             // Found overlap - combine stabilized text with new part from preview
             let combined = format!(
                 "{}{}",
-                state.stabilized_text,
+                self.state.stabilized_text,
                 &preview_text[matching_pos as usize..]
             );
             return combined;
@@ -327,8 +324,8 @@ impl Typer {
 
         // No tail match found - be conservative to avoid text loss
         // Prefer the longer text (session text or preview) to avoid disappearing words
-        let best_text = if state.full_session_text.len() >= preview_text.len() {
-            &state.full_session_text
+        let best_text = if self.state.full_session_text.len() >= preview_text.len() {
+            &self.state.full_session_text
         } else {
             preview_text
         };
@@ -366,159 +363,152 @@ impl Typer {
     }
 
     /// Process final text (completed sentence) - Uses full session audio
-    pub fn process_final_text(
-        enigo: &mut Enigo,
-        final_text: &str,
-        actually_typed: &mut String,
-        typed_counter: &Arc<AtomicUsize>,
-        state: &mut State,
-        cancellation_token: &tokio_util::sync::CancellationToken,
-    ) {
-        // Use the full session text if it's longer/better than the final text
-        let text_to_use = if state.full_session_text.len() > final_text.len() {
-            debug!(
-                "Using full session text for final ({}  chars vs {} chars)",
-                state.full_session_text.len(),
-                final_text.len()
-            );
-            &state.full_session_text
+    pub fn process_final_text(&mut self, transcription_result: &str) {
+        // No preview typing, type directly
+        let processed_text =
+            crate::output::preview::Typer::preprocess_text(transcription_result, false);
+        let final_text = format!("{processed_text} ");
+        if let Err(e) = self.keyboard_simulator.type_text(&final_text) {
+            warn!("Failed to type final transcription: {e}");
         } else {
-            debug!("Using provided final text ({} chars)", final_text.len());
-            final_text
-        };
-
-        let processed_text = Self::preprocess_text(text_to_use, false); // is_preview = false (adds period)
-
-        // Clear preview and type final text
-        Self::apply_text_update(
-            enigo,
-            &processed_text,
-            actually_typed,
-            typed_counter,
-            cancellation_token,
-        );
-
-        // Add space after final text
-        if !cancellation_token.is_cancelled() {
-            let _ = enigo.text(" ");
-            actually_typed.push(' ');
-            typed_counter.store(
-                actually_typed.chars().count(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
+            info!("Step 6 complete: Final transcription typed directly");
         }
 
         // Reset state for next sentence - but keep the full session text for user reference
-        state.prev_text.clear();
-        state.last_transcription = processed_text;
-        state.last_growth_time = std::time::Instant::now();
+        self.state.prev_text.clear();
+        self.state.last_transcription = processed_text;
+        self.state.last_growth_time = std::time::Instant::now();
 
         info!(
             "Completed sentence. Session text: '{}'",
-            state.full_session_text.chars().take(50).collect::<String>()
+            self.state
+                .full_session_text
+                .chars()
+                .take(50)
+                .collect::<String>()
         );
 
         // Clear session for next recording
-        state.full_session_text.clear();
+        self.state.full_session_text.clear();
     }
 
     /// Apply text update to screen (common logic)
-    fn apply_text_update(
-        enigo: &mut Enigo,
-        new_text: &str,
-        actually_typed: &mut String,
-        typed_counter: &Arc<AtomicUsize>,
-        cancellation_token: &tokio_util::sync::CancellationToken,
-    ) {
+    fn apply_text_update(&mut self, new_text: &str, actually_typed: &mut String) {
         let old_char_count = actually_typed.chars().count();
         let new_char_count = new_text.chars().count();
 
+        info!(
+            "Typing logic: old_typed='{}', new_display='{}', old_count={}, new_count={}",
+            actually_typed.chars().take(30).collect::<String>(),
+            new_text.chars().take(30).collect::<String>(),
+            old_char_count,
+            new_char_count
+        );
+
+        let actual_chars_on_screen;
+        // Screen is empty, just type the new text
         if old_char_count == 0 {
-            // Screen is empty, just type the new text
-            let _ = enigo.text(new_text);
             info!(
-                "Initial typed: '{}' ({} chars)",
-                new_text.chars().take(40).collect::<String>(),
-                new_char_count
+                "Screen empty, typing new text: '{}'",
+                new_text.chars().take(30).collect::<String>()
             );
-        } else if new_text.starts_with(actually_typed.as_str())
+            let _ = self.keyboard_simulator.type_text(&format!("{new_text} "));
+            actual_chars_on_screen = new_char_count;
+        }
+        // Screen is not empty, check if new text starts with actually typed text
+        else if new_text.starts_with(actually_typed.as_str())
             && new_text.len() > actually_typed.len()
         {
-            // Perfect extension - just add the suffix (most common case)
+            // Perfect extension - just add the suffix
             let suffix = &new_text[actually_typed.len()..];
-            let _ = enigo.text(suffix);
-            info!(
-                "Extended: '{}' (+{} chars, total: {})",
-                suffix.chars().take(20).collect::<String>(),
-                suffix.chars().count(),
-                new_char_count
-            );
+            info!("Perfect extension, adding suffix: '{suffix}'");
+            let _ = self.keyboard_simulator.type_text(&format!("{suffix} "));
+            actual_chars_on_screen = new_char_count;
         } else {
             // Need to replace - use differential update
-            let net_change =
-                Self::apply_simple_diff(enigo, actually_typed, new_text, cancellation_token);
+            info!("Need replacement, using diff update");
+            let net_change = self.apply_simple_diff(actually_typed, new_text);
 
-            if cancellation_token.is_cancelled() {
-                return;
-            }
+            // Calculate actual characters on screen based on the net change
+            let new_count = old_char_count + net_change;
+            actual_chars_on_screen = new_count.max(0);
 
             info!(
-                "Replaced: {}{} chars (total: {})",
-                if net_change >= 0 { "+" } else { "" },
+                "Replaced: {}{} chars (screen total: {})",
+                if net_change > 0 { "+" } else { "" },
                 net_change,
-                new_char_count
+                actual_chars_on_screen
             );
         }
 
-        // Update state to match what we just typed
-        actually_typed.clear();
-        actually_typed.push_str(new_text);
-        typed_counter.store(new_char_count, std::sync::atomic::Ordering::Relaxed);
+        // Update state to match what we think is actually on screen
+        if actual_chars_on_screen == new_char_count {
+            // Typing succeeded completely
+            actually_typed.clear();
+            actually_typed.push_str(new_text);
+            info!(
+                "Updated actually_typed to: '{}'",
+                actually_typed.chars().take(30).collect::<String>()
+            );
+        } else {
+            // Typing failed or was partial - but for preview, we should still track what we attempted to type
+            // This ensures preview clearing works correctly even when there are typing discrepancies
+            warn!(
+                "Character count mismatch: expected {new_char_count}, actual {actual_chars_on_screen}, updating actually_typed anyway"
+            );
+            actually_typed.clear();
+            actually_typed.push_str(new_text);
+            info!(
+                "Force updated actually_typed to: '{}'",
+                actually_typed.chars().take(30).collect::<String>()
+            );
+        }
     }
 
     /// Clear all typed text and reset state
-    pub fn clear_preview(
-        enigo: &mut Enigo,
-        actually_typed: &mut String,
-        typed_counter: &Arc<AtomicUsize>,
-        state: &mut State,
-        cancellation_token: &tokio_util::sync::CancellationToken,
-    ) {
+    pub fn clear_preview(&mut self, actually_typed: &mut String) {
+        info!("clear_preview called with actually_typed: '{actually_typed}'");
+
         if actually_typed.is_empty() {
+            info!("actually_typed is empty, nothing to clear");
             return;
         }
 
         let chars_to_delete = actually_typed.chars().count();
-        let batch_size = 20;
-        let mut remaining = chars_to_delete;
+        info!("Backspacing {chars_to_delete} characters");
 
-        while remaining > 0 {
-            if cancellation_token.is_cancelled() {
-                debug!("Cancelled during clear at {remaining} remaining");
-                return;
-            }
-
-            let batch = remaining.min(batch_size);
-            for _ in 0..batch {
-                let _ = enigo.key(enigo::Key::Backspace, enigo::Direction::Click);
-            }
-            remaining -= batch;
-
-            if remaining > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
+        if let Err(e) = self.keyboard_simulator.backspace_n(chars_to_delete) {
+            warn!("Failed to backspace preview text: {e}");
+        } else {
+            info!("Successfully backspaced {chars_to_delete} characters");
         }
 
         actually_typed.clear();
-        typed_counter.store(0, std::sync::atomic::Ordering::Relaxed);
 
         // Also clear state when explicitly clearing preview
-        state.prev_text.clear();
-        state.last_transcription.clear();
-        state.full_session_text.clear();
-        state.last_growth_time = std::time::Instant::now();
+        self.state.prev_text.clear();
+        self.state.last_transcription.clear();
+        self.state.full_session_text.clear();
+        self.state.last_growth_time = std::time::Instant::now();
 
-        debug!("Cleared all {chars_to_delete} characters and reset state");
+        info!("Cleared all {chars_to_delete} characters and reset state");
+    }
+
+    /// In a single input session, backspace preview chars then type final text
+    ///
+    /// # Errors
+    /// This function can fail if the enigo initialization fails or if the text typing task fails.
+    pub fn replace_preview_and_type(&mut self, preview_chars: usize, text: &str) {
+        // Use unified preprocessor for final text (adds period, capitalizes)
+        let processed_text = Typer::preprocess_text(text, false);
+        let text_to_type = processed_text + " ";
+
+        // Erase preview in batches
+        if preview_chars > 0 {
+            let _ = self.keyboard_simulator.backspace_n(preview_chars);
+        }
+
+        let _ = self.keyboard_simulator.type_text(&text_to_type);
     }
 }
 

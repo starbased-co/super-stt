@@ -34,7 +34,6 @@ pub struct DaemonAudioRecorder {
     recording_state: Arc<Mutex<RecordingState>>,
     pub audio_level_tx: broadcast::Sender<AudioLevel>,
     audio_theme: AudioTheme,
-    _stream: Option<Stream>,
     // Audio device initialization state
     audio_device_cache: Arc<Mutex<Option<AudioDeviceCache>>>,
 }
@@ -63,7 +62,6 @@ impl DaemonAudioRecorder {
             recording_state: Arc::new(Mutex::new(RecordingState::new())),
             audio_level_tx,
             audio_theme: theme,
-            _stream: None,
             audio_device_cache: Arc::new(Mutex::new(None)),
         };
 
@@ -176,7 +174,7 @@ impl DaemonAudioRecorder {
         let udp_streamer_clone = Arc::clone(&udp_streamer);
         let device_sample_rate_u32 = stream_config.sample_rate.0;
         let device_sample_rate = device_sample_rate_u32 as f32;
-        tokio::spawn(async move {
+        let analysis_task = tokio::spawn(async move {
             let frequency_analyzer = AudioAnalyzer::new(device_sample_rate, 1024);
 
             while let Some(samples) = samples_rx.recv().await {
@@ -219,7 +217,7 @@ impl DaemonAudioRecorder {
             buffer_clone,
             state_clone,
             level_tx,
-            samples_tx,
+            samples_tx.clone(),
         )?;
 
         // Wait for recording to complete with intelligent timeout
@@ -271,6 +269,12 @@ impl DaemonAudioRecorder {
         }
 
         drop(stream);
+
+        // Close the samples channel to stop the analysis task
+        drop(samples_tx);
+
+        // Wait for analysis task to finish
+        let _ = analysis_task.await;
 
         // Check if timeout occurred
         if timeout_occurred {
@@ -453,6 +457,55 @@ impl DaemonAudioRecorder {
             .context("No input device available")?;
         let config = self.get_optimal_config(&device)?;
         Ok(config.config().sample_rate.0)
+    }
+
+    /// Prepare recorder for threaded operation - initializes any threaded state
+    pub fn prepare_for_threaded_recording(&mut self) {
+        // Initialize any threaded state here if needed in the future
+        // For now, the recorder is already set up for async operation
+    }
+
+    /// Get all recorded audio data - this should be called after recording is complete
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the audio buffer cannot be accessed
+    pub fn get_full_audio_data(&self) -> Result<Vec<f32>> {
+        let buffer = match self.audio_buffer.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::warn!(
+                    "Audio buffer lock was poisoned during get_full_audio_data, attempting recovery"
+                );
+                poisoned.into_inner()
+            }
+        };
+
+        let audio_data: Vec<f32> = buffer.iter().copied().collect();
+        Ok(audio_data)
+    }
+
+    /// Check if the recorder is still actively recording
+    /// This checks the internal recording state
+    #[must_use]
+    pub fn is_still_recording(&self) -> bool {
+        match self.recording_state.lock() {
+            Ok(state) => !state.should_stop(),
+            Err(poisoned) => {
+                log::warn!(
+                    "Recording state lock was poisoned during is_still_recording check, attempting recovery"
+                );
+                let state = poisoned.into_inner();
+                !state.should_stop()
+            }
+        }
+    }
+
+    /// Get a reference to the internal audio buffer for direct access during recording
+    /// This allows preview functionality to access the buffer without blocking the recording thread
+    #[must_use]
+    pub fn get_audio_buffer_ref(&self) -> Arc<Mutex<VecDeque<f32>>> {
+        Arc::clone(&self.audio_buffer)
     }
 }
 trait PipeExt<T> {

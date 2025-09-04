@@ -82,6 +82,9 @@ pub struct SuperSTTDaemon {
     pub process_auth: ProcessAuth,
     // Resource management for connection and rate limiting
     pub resource_manager: Arc<ResourceManager>,
+    // Preview typing setting (beta feature)
+    pub preview_typing_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    // Mutex to prevent GPU processing during typing operations
 }
 
 impl SuperSTTDaemon {
@@ -169,6 +172,9 @@ impl SuperSTTDaemon {
         let preferred_device = config.device.preferred_device.clone();
         let actual_device = preferred_device.clone(); // Will be updated when model loads
 
+        // Extract preview typing setting before config gets moved
+        let preview_typing_enabled = config.transcription.preview_typing_enabled;
+
         // Create the daemon instance first (needed for model loading)
         let daemon = SuperSTTDaemon {
             socket_path,
@@ -192,6 +198,9 @@ impl SuperSTTDaemon {
             active_connections: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             process_auth,
             resource_manager,
+            preview_typing_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                preview_typing_enabled,
+            )),
         };
 
         // Apply temporary device override for current session (not saved to config)
@@ -483,6 +492,16 @@ impl SuperSTTDaemon {
         notification_manager: &Arc<NotificationManager>,
         config: &Arc<tokio::sync::RwLock<DaemonConfig>>,
     ) -> Result<(), anyhow::Error> {
+        // Save config to disk first
+        {
+            let config_guard = config.read().await;
+            if let Err(e) = config_guard.save() {
+                log::warn!("Failed to save config to disk: {e}");
+                return Err(anyhow::anyhow!("Failed to save config to disk: {e}"));
+            }
+        }
+
+        // Then broadcast the change
         let config_guard = config.read().await;
         let config_json = serde_json::to_value(&*config_guard)?;
         drop(config_guard);
@@ -498,7 +517,9 @@ impl SuperSTTDaemon {
             )
             .await?;
 
-        log::debug!("Broadcasted config change event to all connected clients");
+        log::debug!(
+            "Saved config to disk and broadcasted config change event to all connected clients"
+        );
         Ok(())
     }
 }

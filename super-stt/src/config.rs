@@ -27,6 +27,8 @@ pub struct AudioConfig {
 pub struct TranscriptionConfig {
     pub preferred_model: STTModel,
     pub write_mode: bool, // Auto-type transcriptions
+    #[serde(default)] // For backwards compatibility with existing configs
+    pub preview_typing_enabled: bool, // Beta feature: show preview while typing
 }
 
 impl Default for DaemonConfig {
@@ -40,7 +42,8 @@ impl Default for DaemonConfig {
             },
             transcription: TranscriptionConfig {
                 preferred_model: STTModel::default(),
-                write_mode: false, // Default to not auto-typing
+                write_mode: false,             // Default to not auto-typing
+                preview_typing_enabled: false, // Default to disabled (beta feature)
             },
         }
     }
