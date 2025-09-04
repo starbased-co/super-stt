@@ -93,10 +93,9 @@ impl SuperSTTDaemon {
 
         // Get a reference to the recorder's internal audio buffer for direct preview access
         let preview_buffer = recorder.get_audio_buffer_ref();
-        
+
         // Detect the actual device sample rate for correct buffer calculations
-        let device_sample_rate = recorder.detect_default_input_sample_rate()
-            .unwrap_or(16000); // fallback to 16kHz if detection fails
+        let device_sample_rate = recorder.detect_default_input_sample_rate().unwrap_or(16000); // fallback to 16kHz if detection fails
         debug!("Detected device sample rate: {} Hz", device_sample_rate);
 
         // Start the recorder in its own thread
@@ -136,27 +135,36 @@ impl SuperSTTDaemon {
                         poisoned.into_inner()
                     }
                 };
-                
+
                 let total_samples = buffer_guard.len();
                 debug!("Total samples in buffer: {}", total_samples);
-                
+
                 if total_samples == 0 {
                     Vec::new()
                 } else {
                     // For preview, get the most recent audio (last 3-5 seconds is usually enough)
                     // Using 5 seconds at the actual device sample rate
-                    let samples_for_preview = std::cmp::min(total_samples, device_sample_rate as usize * 5);
+                    let samples_for_preview =
+                        std::cmp::min(total_samples, device_sample_rate as usize * 5);
                     let start_idx = total_samples - samples_for_preview;
-                    
+
                     let samples: Vec<f32> = buffer_guard.range(start_idx..).copied().collect();
-                    debug!("Extracted {} samples for preview (from idx {} to {})", 
-                           samples.len(), start_idx, total_samples);
-                    
+                    debug!(
+                        "Extracted {} samples for preview (from idx {} to {})",
+                        samples.len(),
+                        start_idx,
+                        total_samples
+                    );
+
                     // Basic audio validation - check if we have reasonable audio levels
                     let max_amplitude = samples.iter().map(|&x| x.abs()).fold(0.0, f32::max);
-                    let avg_amplitude = samples.iter().map(|&x| x.abs()).sum::<f32>() / samples.len() as f32;
-                    debug!("Audio stats: max_amp={:.4}, avg_amp={:.4}", max_amplitude, avg_amplitude);
-                    
+                    let avg_amplitude =
+                        samples.iter().map(|&x| x.abs()).sum::<f32>() / samples.len() as f32;
+                    debug!(
+                        "Audio stats: max_amp={:.4}, avg_amp={:.4}",
+                        max_amplitude, avg_amplitude
+                    );
+
                     if max_amplitude < 0.001 {
                         debug!("Audio appears to be mostly silence, skipping transcription");
                         Vec::new()
@@ -165,12 +173,21 @@ impl SuperSTTDaemon {
                     }
                 }
             };
-            
+
             debug!("Got {} audio samples for preview", audio_data.len());
-            if !audio_data.is_empty() {
+
+            // Check if preview typing is enabled before doing any processing
+            let preview_enabled = self
+                .preview_typing_enabled
+                .load(std::sync::atomic::Ordering::Relaxed);
+
+            if !audio_data.is_empty() && write_mode && preview_enabled {
                 // Resample to 16kHz if needed (same as final recording does)
                 let resampled_audio = if device_sample_rate != 16000 {
-                    debug!("Resampling from {}Hz to 16kHz for preview", device_sample_rate);
+                    debug!(
+                        "Resampling from {}Hz to 16kHz for preview",
+                        device_sample_rate
+                    );
                     match super_stt_shared::utils::audio::resample(
                         &audio_data,
                         device_sample_rate,
@@ -178,7 +195,11 @@ impl SuperSTTDaemon {
                         super_stt_shared::audio_utils::ResampleQuality::Fast,
                     ) {
                         Ok(resampled) => {
-                            debug!("Resampled {} samples to {} samples", audio_data.len(), resampled.len());
+                            debug!(
+                                "Resampled {} samples to {} samples",
+                                audio_data.len(),
+                                resampled.len()
+                            );
                             resampled
                         }
                         Err(e) => {
@@ -192,16 +213,24 @@ impl SuperSTTDaemon {
                 };
 
                 // Transcribe resampled audio data using current model
-                debug!("Starting preview transcription with {} samples", resampled_audio.len());
+                debug!(
+                    "Starting preview transcription with {} samples",
+                    resampled_audio.len()
+                );
                 if let Ok(text) = self.transcribe_audio_chunk(&resampled_audio).await {
-                    if write_mode && !text.trim().is_empty() {
-                        info!("Updating preview with text: '{}'", text.chars().take(30).collect::<String>());
+                    if !text.trim().is_empty() {
+                        info!(
+                            "Updating preview with text: '{}'",
+                            text.chars().take(30).collect::<String>()
+                        );
                         if let Ok(mut actually_typed_guard) = actually_typed.lock() {
                             typer.update_preview(&text, &mut actually_typed_guard);
                         }
                     }
                 }
-            } else {
+            } else if !preview_enabled {
+                debug!("Preview typing is disabled, skipping audio processing and transcription");
+            } else if audio_data.is_empty() {
                 debug!("No audio data available for preview yet");
             }
 
@@ -217,10 +246,27 @@ impl SuperSTTDaemon {
         // Wait for recorder to finish and get full audio data
         let full_audio_data = recorder_handle.await??;
 
-        // Clear preview after recording is done
+        // Clear preview after recording is done (only if preview typing was enabled)
         if write_mode {
-            if let Ok(mut actually_typed_guard) = actually_typed.lock() {
-                typer.clear_preview(&mut actually_typed_guard);
+            let preview_enabled = self
+                .preview_typing_enabled
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if preview_enabled {
+                if let Ok(mut actually_typed_guard) = actually_typed.lock() {
+                    info!(
+                        "Clearing preview text: '{}'",
+                        actually_typed_guard.chars().take(50).collect::<String>()
+                    );
+                    typer.clear_preview(&mut actually_typed_guard);
+                    info!(
+                        "Preview cleared, actually_typed is now: '{}'",
+                        actually_typed_guard
+                    );
+                } else {
+                    warn!("Failed to acquire actually_typed lock for clearing preview");
+                }
+            } else {
+                debug!("Preview typing was disabled, no preview to clear");
             }
         }
         info!("Step 2 complete: Preview has been cleared");
@@ -281,27 +327,36 @@ impl SuperSTTDaemon {
 
     /// Transcribe a chunk of audio data for preview
     async fn transcribe_audio_chunk(&self, audio_data: &[f32]) -> Result<String> {
-        debug!("Processing {} samples for preview transcription", audio_data.len());
-        
+        debug!(
+            "Processing {} samples for preview transcription",
+            audio_data.len()
+        );
+
         // Basic validation of audio data
         if audio_data.is_empty() {
             debug!("Audio data is empty, skipping transcription");
             return Ok(String::new());
         }
-        
+
         // Check audio length - need at least 1 second of audio for decent transcription
         if audio_data.len() < 16000 {
-            debug!("Audio data too short ({} samples), skipping transcription", audio_data.len());
+            debug!(
+                "Audio data too short ({} samples), skipping transcription",
+                audio_data.len()
+            );
             return Ok(String::new());
         }
-        
+
         // Process audio
         let processed_audio = self
             .audio_processor
             .process_audio(audio_data, 16000)
             .context("Failed to process audio chunk")?;
-            
-        debug!("Audio processing complete, processed {} samples", processed_audio.len());
+
+        debug!(
+            "Audio processing complete, processed {} samples",
+            processed_audio.len()
+        );
 
         // Clone the model Arc for the blocking task
         let model_clone = Arc::clone(&self.model);

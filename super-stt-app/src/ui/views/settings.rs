@@ -11,25 +11,21 @@ use super::common::page_layout;
 use crate::ui::messages::Message;
 
 /// Preview typing settings section using cosmic-settings style
-pub fn preview_typing_settings_widget(
-    preview_typing_enabled: bool,
-) -> Element<'static, Message> {
-    let mut section = settings::section()
-        .title("Preview Typing (Beta)");
-    
+pub fn preview_typing_settings_widget(preview_typing_enabled: bool) -> Element<'static, Message> {
+    let mut section = settings::section().title("Preview Typing (Beta)");
+
     // Add description text as a separate item
     section = section.add(settings::item(
         "",
         text::caption("Preview typing shows transcription results as you speak. This is an experimental feature and may affect performance.")
     ));
-    
+
     // Add the toggler control
     section = section.add(settings::item(
         "Enable Preview Typing",
-        cosmic::widget::toggler(preview_typing_enabled)
-            .on_toggle(Message::PreviewTypingToggled),
+        cosmic::widget::toggler(preview_typing_enabled).on_toggle(Message::PreviewTypingToggled),
     ));
-    
+
     section.into()
 }
 

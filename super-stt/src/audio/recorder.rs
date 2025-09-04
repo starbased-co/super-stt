@@ -475,14 +475,16 @@ impl DaemonAudioRecorder {
         let buffer = match self.audio_buffer.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                log::warn!("Audio buffer lock was poisoned during get_last_10_seconds, attempting recovery");
+                log::warn!(
+                    "Audio buffer lock was poisoned during get_last_10_seconds, attempting recovery"
+                );
                 poisoned.into_inner()
             }
         };
 
         // Calculate how many samples represent 10 seconds
         let samples_per_10_seconds = (self.sample_rate * 10) as usize;
-        
+
         // Get the last N samples from the buffer
         let total_samples = buffer.len();
         if total_samples == 0 {
@@ -508,7 +510,9 @@ impl DaemonAudioRecorder {
         let buffer = match self.audio_buffer.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                log::warn!("Audio buffer lock was poisoned during get_full_audio_data, attempting recovery");
+                log::warn!(
+                    "Audio buffer lock was poisoned during get_full_audio_data, attempting recovery"
+                );
                 poisoned.into_inner()
             }
         };
@@ -524,7 +528,9 @@ impl DaemonAudioRecorder {
         match self.recording_state.lock() {
             Ok(state) => !state.should_stop(),
             Err(poisoned) => {
-                log::warn!("Recording state lock was poisoned during is_still_recording check, attempting recovery");
+                log::warn!(
+                    "Recording state lock was poisoned during is_still_recording check, attempting recovery"
+                );
                 let state = poisoned.into_inner();
                 !state.should_stop()
             }

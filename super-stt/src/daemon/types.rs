@@ -131,7 +131,6 @@ impl SuperSTTDaemon {
             config.transcription.preferred_model,
         )));
 
-        
         // Initialize other managers
         let realtime_manager = Arc::new(RealTimeTranscriptionManager::new(
             Arc::clone(&model),
@@ -172,7 +171,7 @@ impl SuperSTTDaemon {
         // Initialize device state based on config
         let preferred_device = config.device.preferred_device.clone();
         let actual_device = preferred_device.clone(); // Will be updated when model loads
-        
+
         // Extract preview typing setting before config gets moved
         let preview_typing_enabled = config.transcription.preview_typing_enabled;
 
@@ -199,8 +198,9 @@ impl SuperSTTDaemon {
             active_connections: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             process_auth,
             resource_manager,
-            preview_typing_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(preview_typing_enabled)),
-        
+            preview_typing_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                preview_typing_enabled,
+            )),
         };
 
         // Apply temporary device override for current session (not saved to config)
@@ -500,7 +500,7 @@ impl SuperSTTDaemon {
                 return Err(anyhow::anyhow!("Failed to save config to disk: {e}"));
             }
         }
-        
+
         // Then broadcast the change
         let config_guard = config.read().await;
         let config_json = serde_json::to_value(&*config_guard)?;
@@ -517,7 +517,9 @@ impl SuperSTTDaemon {
             )
             .await?;
 
-        log::debug!("Saved config to disk and broadcasted config change event to all connected clients");
+        log::debug!(
+            "Saved config to disk and broadcasted config change event to all connected clients"
+        );
         Ok(())
     }
 }

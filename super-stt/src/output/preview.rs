@@ -151,6 +151,13 @@ impl Typer {
     pub fn update_preview(&mut self, new_text: &str, actually_typed: &mut String) {
         let processed_text = Self::preprocess_text(new_text, true);
 
+        info!(
+            "Preview update: new='{}', prev='{}', typed='{}'",
+            processed_text.chars().take(30).collect::<String>(),
+            self.state.prev_text.chars().take(30).collect::<String>(),
+            actually_typed.chars().take(30).collect::<String>()
+        );
+
         // Skip if text hasn't changed
         if processed_text == self.state.prev_text {
             debug!("Text unchanged, skipping");
@@ -169,11 +176,19 @@ impl Typer {
         // PHASE 2: Decide what to show on screen
         let display_text = self.build_display_text(&processed_text);
 
-        debug!(
-            "Display text: '{}' (session: {} chars, preview: {} chars)",
-            display_text.chars().take(50).collect::<String>(),
-            self.state.full_session_text.chars().count(),
-            processed_text.chars().count()
+        info!(
+            "Display logic: display='{}', session='{}', stabilized='{}'",
+            display_text.chars().take(30).collect::<String>(),
+            self.state
+                .full_session_text
+                .chars()
+                .take(30)
+                .collect::<String>(),
+            self.state
+                .stabilized_text
+                .chars()
+                .take(30)
+                .collect::<String>()
         );
 
         // Apply the update to screen
@@ -391,19 +406,35 @@ impl Typer {
         let new_char_count = new_text.chars().count();
         let mut actual_chars_on_screen = old_char_count;
 
+        info!(
+            "Typing logic: old_typed='{}', new_display='{}', old_count={}, new_count={}",
+            actually_typed.chars().take(30).collect::<String>(),
+            new_text.chars().take(30).collect::<String>(),
+            old_char_count,
+            new_char_count
+        );
+
         // Screen is empty, just type the new text
         if old_char_count == 0 {
+            info!(
+                "Screen empty, typing new text: '{}'",
+                new_text.chars().take(30).collect::<String>()
+            );
             let _ = self.keyboard_simulator.type_text(&format!("{new_text} "));
+            actual_chars_on_screen = new_char_count;
         }
         // Screen is not empty, check if new text starts with actually typed text
         else if new_text.starts_with(actually_typed.as_str())
             && new_text.len() > actually_typed.len()
         {
             // Perfect extension - just add the suffix
-            let suffix = format!("{} ", &new_text[actually_typed.len()..]);
-            let _ = self.keyboard_simulator.type_text(&suffix);
+            let suffix = &new_text[actually_typed.len()..];
+            info!("Perfect extension, adding suffix: '{}'", suffix);
+            let _ = self.keyboard_simulator.type_text(&format!("{suffix} "));
+            actual_chars_on_screen = new_char_count;
         } else {
             // Need to replace - use differential update
+            info!("Need replacement, using diff update");
             let net_change = self.apply_simple_diff(actually_typed, new_text);
 
             // Calculate actual characters on screen based on the net change
@@ -423,24 +454,45 @@ impl Typer {
             // Typing succeeded completely
             actually_typed.clear();
             actually_typed.push_str(new_text);
+            info!(
+                "Updated actually_typed to: '{}'",
+                actually_typed.chars().take(30).collect::<String>()
+            );
         } else {
-            // Typing failed or was partial - we can't be sure what's on screen
-            // Keep the old actually_typed but log the discrepancy
+            // Typing failed or was partial - but for preview, we should still track what we attempted to type
+            // This ensures preview clearing works correctly even when there are typing discrepancies
             warn!(
-                "Character count mismatch: expected {new_char_count}, actual {actual_chars_on_screen}"
+                "Character count mismatch: expected {new_char_count}, actual {actual_chars_on_screen}, updating actually_typed anyway"
+            );
+            actually_typed.clear();
+            actually_typed.push_str(new_text);
+            info!(
+                "Force updated actually_typed to: '{}'",
+                actually_typed.chars().take(30).collect::<String>()
             );
         }
     }
 
     /// Clear all typed text and reset state
     pub fn clear_preview(&mut self, actually_typed: &mut String) {
+        info!(
+            "clear_preview called with actually_typed: '{}'",
+            actually_typed
+        );
+
         if actually_typed.is_empty() {
+            info!("actually_typed is empty, nothing to clear");
             return;
         }
 
         let chars_to_delete = actually_typed.chars().count();
+        info!("Backspacing {} characters", chars_to_delete);
 
-        let _ = self.keyboard_simulator.backspace_n(chars_to_delete);
+        if let Err(e) = self.keyboard_simulator.backspace_n(chars_to_delete) {
+            warn!("Failed to backspace preview text: {e}");
+        } else {
+            info!("Successfully backspaced {} characters", chars_to_delete);
+        }
 
         actually_typed.clear();
 
@@ -450,7 +502,7 @@ impl Typer {
         self.state.full_session_text.clear();
         self.state.last_growth_time = std::time::Instant::now();
 
-        debug!("Cleared all {chars_to_delete} characters and reset state");
+        info!("Cleared all {} characters and reset state", chars_to_delete);
     }
 
     /// In a single input session, backspace preview chars then type final text

@@ -119,7 +119,8 @@ pub async fn fetch_daemon_config(socket_path: PathBuf) -> Result<serde_json::Val
 
 /// Set preview typing enabled/disabled on daemon
 pub async fn set_preview_typing(socket_path: PathBuf, enabled: bool) -> Result<(), String> {
-    super_stt_shared::daemon::client::set_preview_typing(socket_path, enabled, get_client_id()).await
+    super_stt_shared::daemon::client::set_preview_typing(socket_path, enabled, get_client_id())
+        .await
 }
 
 /// Get current preview typing setting from daemon

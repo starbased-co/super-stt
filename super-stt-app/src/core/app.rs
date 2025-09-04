@@ -5,7 +5,8 @@ use crate::audio::{parse_audio_level_from_udp, parse_recording_state_from_udp};
 use crate::daemon::client::{
     cancel_download, fetch_daemon_config, get_current_device, get_current_model,
     get_download_status, get_preview_typing, list_available_models, load_audio_themes, ping_daemon,
-    send_record_command, set_and_test_audio_theme, set_device, set_model, set_preview_typing, test_daemon_connection,
+    send_record_command, set_and_test_audio_theme, set_device, set_model, set_preview_typing,
+    test_daemon_connection,
 };
 use crate::state::{AudioTheme, ContextPage, DaemonStatus, MenuAction, Page, RecordingStatus};
 use crate::ui::messages::Message;
@@ -689,7 +690,9 @@ impl AppModel {
                     // Load preview typing setting from daemon
                     Task::perform(get_preview_typing(self.socket_path.clone()), |result| {
                         match result {
-                            Ok(enabled) => cosmic::Action::App(Message::PreviewTypingSettingLoaded(enabled)),
+                            Ok(enabled) => {
+                                cosmic::Action::App(Message::PreviewTypingSettingLoaded(enabled))
+                            }
                             Err(e) => {
                                 log::warn!("Failed to load preview typing setting: {e}");
                                 // Continue with default (false) - don't show error to user on startup
@@ -1094,7 +1097,10 @@ impl AppModel {
     }
 
     /// Handle preview typing messages
-    fn handle_preview_typing_messages(&mut self, message: Message) -> Task<cosmic::Action<Message>> {
+    fn handle_preview_typing_messages(
+        &mut self,
+        message: Message,
+    ) -> Task<cosmic::Action<Message>> {
         match message {
             Message::PreviewTypingToggled(enabled) => {
                 self.preview_typing_enabled = enabled;

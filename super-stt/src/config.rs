@@ -42,7 +42,7 @@ impl Default for DaemonConfig {
             },
             transcription: TranscriptionConfig {
                 preferred_model: STTModel::default(),
-                write_mode: false, // Default to not auto-typing
+                write_mode: false,             // Default to not auto-typing
                 preview_typing_enabled: false, // Default to disabled (beta feature)
             },
         }
