@@ -285,34 +285,6 @@ impl RealTimeTranscriptionManager {
         Ok(receiver)
     }
 
-    /// Stop a session for a given client id
-    ///
-    /// # Errors
-    ///
-    /// Currently infallible, returns `Ok(())`.
-    pub async fn stop_session(&self, client_id: &str) -> Result<()> {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.remove(client_id) {
-            // Cancel all in-flight transcription tasks for this session
-            session.cancellation_token.cancel();
-            debug!("Cancelled transcription tasks for session: {client_id}");
-
-            // Broadcast session stopped event
-            let _ = self
-                .notification_manager
-                .broadcast_event(
-                    "realtime_session_stopped".to_string(),
-                    client_id.to_string(),
-                    serde_json::json!({
-                        "timestamp": chrono::Utc::now().to_rfc3339()
-                    }),
-                )
-                .await;
-        }
-
-        Ok(())
-    }
-
     /// Ingest an audio chunk for a given client
     ///
     /// # Errors

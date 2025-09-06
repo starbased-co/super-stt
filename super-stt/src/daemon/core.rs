@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::{daemon::types::SuperSTTDaemon, output::keyboard::Simulator};
+use crate::{daemon::types::SuperSTTDaemon, output::preview::Typer};
 use super_stt_shared::models::protocol::{Command, DaemonRequest, DaemonResponse};
 
 impl SuperSTTDaemon {
     /// Main command handler - routes commands to appropriate handlers
     pub async fn handle_command(&self, request: DaemonRequest) -> DaemonResponse {
-        let mut keyboard_simulator = Simulator::default();
-
         // Track connection if client_id is present
         if let Some(client_id) = &request.client_id {
             self.update_client_connection(client_id.clone()).await;
@@ -55,9 +53,6 @@ impl SuperSTTDaemon {
                 self.handle_start_realtime(client_id, sample_rate, language)
                     .await
             }
-            Command::StopRealTimeTranscription { client_id } => {
-                self.handle_stop_realtime(client_id).await
-            }
             Command::RealTimeAudioChunk {
                 client_id,
                 audio_data,
@@ -67,8 +62,8 @@ impl SuperSTTDaemon {
                     .await
             }
             Command::Record { write_mode } => {
-                self.handle_record_internal(&mut keyboard_simulator, write_mode)
-                    .await
+                let mut typer = Typer::default();
+                self.handle_record_internal(&mut typer, write_mode).await
             }
             Command::SetAudioTheme { theme } => self.handle_set_audio_theme(theme),
             Command::GetAudioTheme => self.handle_get_audio_theme(),
@@ -82,6 +77,8 @@ impl SuperSTTDaemon {
             Command::CancelDownload => self.handle_cancel_download(),
             Command::GetDownloadStatus => self.handle_get_download_status(),
             Command::ListAudioThemes => self.handle_list_audio_themes(),
+            Command::SetPreviewTyping { enabled } => self.handle_set_preview_typing(enabled).await,
+            Command::GetPreviewTyping => self.handle_get_preview_typing(),
         }
     }
 
@@ -106,20 +103,6 @@ impl SuperSTTDaemon {
             Err(e) => {
                 log::error!("Failed to start real-time session: {e}");
                 DaemonResponse::error(&format!("Failed to start real-time session: {e}"))
-            }
-        }
-    }
-
-    pub async fn handle_stop_realtime(&self, client_id: String) -> DaemonResponse {
-        match self.realtime_manager.stop_session(&client_id).await {
-            Ok(()) => {
-                log::info!("Stopped real-time transcription for client: {client_id}");
-                DaemonResponse::success()
-                    .with_message("Real-time transcription session stopped".to_string())
-            }
-            Err(e) => {
-                log::error!("Failed to stop real-time session: {e}");
-                DaemonResponse::error(&format!("Failed to stop real-time session: {e}"))
             }
         }
     }

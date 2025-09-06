@@ -123,7 +123,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ matrix.target }}-${{ matrix.suffix }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: cuda:12.7.0-cudnn-devel-ubuntu22.04-${{ matrix.target }}-${{ matrix.suffix }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cross (for cross-compilation)
         run: cargo install cross --git https://github.com/cross-rs/cross

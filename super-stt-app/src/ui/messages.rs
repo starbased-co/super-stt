@@ -66,4 +66,9 @@ pub enum Message {
     },
     CheckDownloadStatus,
     NoDownloadInProgress,
+
+    // Preview typing messages
+    PreviewTypingToggled(bool),       // User toggled the setting
+    PreviewTypingSettingLoaded(bool), // Setting loaded from daemon
+    PreviewTypingError(String),       // Error setting or getting preview typing
 }

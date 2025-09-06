@@ -241,6 +241,7 @@ async fn send_record_request_to_daemon(socket_path: &PathBuf, write_mode: bool) 
             "write_mode": write_mode
         })),
         language: None,
+        enabled: None,
     };
 
     let request_data = serde_json::to_vec(&request)?;
@@ -283,6 +284,7 @@ async fn send_status_request_to_daemon(socket_path: &PathBuf) -> Result<()> {
         client_id: Some("status_client".to_string()),
         data: None,
         language: None,
+        enabled: None,
     };
 
     let request_data = serde_json::to_vec(&request)?;

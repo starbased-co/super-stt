@@ -86,6 +86,7 @@ pub fn create_daemon_request(command: &str, client_id: &str) -> DaemonRequest {
         since_timestamp: None,
         limit: None,
         event_type: None,
+        enabled: None,
     }
 }
 
@@ -431,5 +432,47 @@ pub async fn list_available_audio_themes(
         Err(response
             .message
             .unwrap_or_else(|| "Unknown error".to_string()))
+    }
+}
+
+/// Set preview typing enabled/disabled on daemon
+///
+/// # Errors
+///
+/// Returns an error if the request fails.
+pub async fn set_preview_typing(
+    socket_path: PathBuf,
+    enabled: bool,
+    client_id: &str,
+) -> Result<(), String> {
+    let mut request = create_daemon_request("set_preview_typing", client_id);
+    request.enabled = Some(enabled);
+
+    let response = send_daemon_request(&socket_path, request).await?;
+
+    if response.status == "success" {
+        Ok(())
+    } else {
+        Err(response
+            .message
+            .unwrap_or_else(|| "Failed to set preview typing".to_string()))
+    }
+}
+
+/// Get current preview typing setting from daemon
+///
+/// # Errors
+///
+/// Returns an error if the request fails.
+pub async fn get_preview_typing(socket_path: PathBuf, client_id: &str) -> Result<bool, String> {
+    let request = create_daemon_request("get_preview_typing", client_id);
+    let response = send_daemon_request(&socket_path, request).await?;
+
+    if response.status == "success" {
+        Ok(response.preview_typing_enabled.unwrap_or(false))
+    } else {
+        Err(response
+            .message
+            .unwrap_or_else(|| "Failed to get preview typing setting".to_string()))
     }
 }

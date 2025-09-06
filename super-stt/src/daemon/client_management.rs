@@ -3,7 +3,7 @@
 use crate::daemon::types::SuperSTTDaemon;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use log::{debug, error, warn};
+use log::{error, warn};
 use std::collections::HashMap;
 use super_stt_shared::models::protocol::{DaemonRequest, DaemonResponse};
 use super_stt_shared::validation::Validate;
@@ -43,15 +43,12 @@ impl SuperSTTDaemon {
             return Ok(());
         }
 
-        debug!("New client connected: {client_id}");
-
         loop {
             // Read message size (8 bytes, big endian)
             let mut size_buf = [0u8; 8];
             match stream.read_exact(&mut size_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!("Client disconnected");
                     break;
                 }
                 Err(e) => {
@@ -109,8 +106,6 @@ impl SuperSTTDaemon {
                 }
                 continue;
             }
-
-            debug!("Received command: {}", request.command);
 
             // Handle special commands that may require persistent connections
             if matches!(
