@@ -32,6 +32,8 @@ pub struct DaemonRequest {
     pub data: Option<Value>,
     #[serde(default)]
     pub language: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -85,6 +87,10 @@ pub struct DaemonResponse {
     // Connection status fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_active: Option<bool>,
+
+    // Preview typing fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_typing_enabled: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -135,6 +141,7 @@ impl DaemonResponse {
             download_progress: None,
             daemon_config: None,
             connection_active: None,
+            preview_typing_enabled: None,
         }
     }
 
@@ -182,6 +189,7 @@ impl DaemonResponse {
             download_progress: None,
             daemon_config: None,
             connection_active: None,
+            preview_typing_enabled: None,
         }
     }
 
@@ -286,6 +294,12 @@ impl DaemonResponse {
         self.connection_active = Some(active);
         self
     }
+
+    #[must_use]
+    pub fn with_preview_typing_enabled(mut self, enabled: bool) -> Self {
+        self.preview_typing_enabled = Some(enabled);
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -320,9 +334,6 @@ pub enum Command {
         sample_rate: Option<u32>,
         language: Option<String>,
     },
-    StopRealTimeTranscription {
-        client_id: String,
-    },
     RealTimeAudioChunk {
         client_id: String,
         audio_data: Vec<f32>,
@@ -349,6 +360,10 @@ pub enum Command {
     CancelDownload,
     GetDownloadStatus,
     ListAudioThemes,
+    SetPreviewTyping {
+        enabled: bool,
+    },
+    GetPreviewTyping,
 }
 
 impl Validate for DaemonRequest {
@@ -434,7 +449,6 @@ impl TryFrom<DaemonRequest> for Command {
             }),
             "status" => Ok(Command::Status),
             "start_realtime" => Ok(cmd_start_realtime(&request)),
-            "stop_realtime" => cmd_stop_realtime(&request),
             "realtime_audio" => cmd_realtime_audio(&request),
             "record" => Ok(cmd_record(&request)),
             "set_audio_theme" => cmd_set_audio_theme(&request),
@@ -449,6 +463,8 @@ impl TryFrom<DaemonRequest> for Command {
             "cancel_download" => Ok(Command::CancelDownload),
             "get_download_status" => Ok(Command::GetDownloadStatus),
             "list_audio_themes" => Ok(Command::ListAudioThemes),
+            "set_preview_typing" => cmd_set_preview_typing(&request),
+            "get_preview_typing" => Ok(Command::GetPreviewTyping),
             _ => Err(format!("Unknown command: {}", request.command)),
         }
     }
@@ -527,14 +543,6 @@ fn cmd_start_realtime(request: &DaemonRequest) -> Command {
     }
 }
 
-fn cmd_stop_realtime(request: &DaemonRequest) -> Result<Command, String> {
-    let client_id = request
-        .client_id
-        .clone()
-        .ok_or("Missing client_id for stop_realtime command")?;
-    Ok(Command::StopRealTimeTranscription { client_id })
-}
-
 fn cmd_realtime_audio(request: &DaemonRequest) -> Result<Command, String> {
     let client_id = request
         .client_id
@@ -609,4 +617,12 @@ fn cmd_set_device(request: &DaemonRequest) -> Result<Command, String> {
     }
 
     Ok(Command::SetDevice { device })
+}
+
+fn cmd_set_preview_typing(request: &DaemonRequest) -> Result<Command, String> {
+    let enabled = request
+        .enabled
+        .ok_or("Missing enabled field for set_preview_typing command")?;
+
+    Ok(Command::SetPreviewTyping { enabled })
 }
