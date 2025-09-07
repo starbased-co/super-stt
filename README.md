@@ -1,4 +1,3 @@
-How do I install this project?
 <div align="center">
 
 <img src=".github/assets/super-stt-icon.svg" width="128" height="128" alt="Super STT">
@@ -11,6 +10,9 @@ How do I install this project?
 
 </div>
 
+https://github.com/user-attachments/assets/bbbe20c3-6802-4797-afc8-aa81d1b48415
+
+
 ## ✨ Features
 
 - **✅ Easy installation** with automated installer
@@ -20,6 +22,7 @@ How do I install this project?
 - **⭐ State-of-the-art Voxtral models support** for optimal performance
 - **🔄 Model switching** on the fly from the app
 - **🎵 Real-time audio visualization** for COSMIC Desktop with the COSMIC Desktop applet
+- **🔠 Live preview** of audio input (beta, experimental)
 
 ## 🤖 Supported Models
 - voxtral-mini (SOTA) **Recommended with GPU**
@@ -54,6 +57,16 @@ The installer automatically:
 - **Daemon**: Sets up systemd user service
 - **Daemon**: Creates required directories for logs and sockets
 - **COSMIC Desktop**: Offers to configure Super+Space keyboard shortcut automatically
+
+## Screenshots
+### Multiple Visualization Styles
+![Centered Bars Visualization](.github/assets/visualization-centered-bars.png)
+![Equalizer Visualization](.github/assets/visualization-equalizer.png)
+![Waveform Visualization](.github/assets/visualization-waveforms.png)
+
+### Custom Colors
+![System Theme](.github/assets/color-options-system-theme.png)
+![Green](.github/assets/color-options-green.png)
 
 ## ⌨️ Setting Up Keyboard Shortcuts
 
