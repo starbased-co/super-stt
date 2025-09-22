@@ -16,7 +16,7 @@ use cosmic::iced::Subscription;
 use cosmic::prelude::*;
 use cosmic::widget::{icon, menu, nav_bar};
 use futures_util::SinkExt;
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -591,11 +591,6 @@ impl cosmic::Application for AppModel {
                 self.recording_status = state;
             }
 
-            // Force UI refresh - used to trigger redraw after state changes
-            Message::RefreshUI => {
-                return self.update_title();
-            }
-
             // Handled by helper methods
             _ => {}
         }
@@ -612,32 +607,9 @@ impl cosmic::Application for AppModel {
 }
 
 impl AppModel {
-    /// Check if model is in downloading state
-    #[allow(dead_code)]
-    pub fn is_model_downloading(&self) -> bool {
-        matches!(
-            self.model_operation_state,
-            ModelOperationState::Downloading { .. }
-        )
-    }
-
-    /// Check if model is in loading state
-    #[allow(dead_code)]
-    pub fn is_model_loading(&self) -> bool {
-        matches!(
-            self.model_operation_state,
-            ModelOperationState::Loading { .. }
-        )
-    }
-
     /// Check if model is ready
     pub fn is_model_ready(&self) -> bool {
         matches!(self.model_operation_state, ModelOperationState::Ready)
-    }
-
-    /// Set model to ready state
-    pub fn set_model_ready(&mut self) {
-        self.model_operation_state = ModelOperationState::Ready;
     }
 
     /// Set model to downloading state
@@ -666,11 +638,6 @@ impl AppModel {
             target_device,
             status_message,
         };
-    }
-
-    /// Set device to ready state
-    pub fn set_device_ready(&mut self) {
-        self.device_state = DeviceState::Ready;
     }
 
     /// Handle daemon connection messages
@@ -703,8 +670,8 @@ impl AppModel {
                 self.daemon_status = DaemonStatus::Connected;
                 // Only clear potentially stuck switching states on actual reconnect, not periodic pings
                 if was_disconnected {
-                    self.set_device_ready();
-                    self.set_model_ready();
+                    self.device_state = DeviceState::Ready;
+                    self.model_operation_state = ModelOperationState::Ready;
                 }
 
                 // Only restart UDP subscription when actually reconnecting, not on periodic pings
@@ -844,7 +811,7 @@ impl AppModel {
                                         ) {
                                             info!("Device switch completed to: {actual_device}");
                                         }
-                                        self.set_device_ready();
+                                        self.device_state = DeviceState::Ready;
                                     }
 
                                     // Handle model readiness - clear switching state
@@ -859,7 +826,7 @@ impl AppModel {
                                             "Model state before ready event: {:?}",
                                             self.model_operation_state
                                         );
-                                        self.set_model_ready();
+                                        self.model_operation_state = ModelOperationState::Ready;
                                         info!(
                                             "Model state after ready event: {:?}",
                                             self.model_operation_state
@@ -872,7 +839,7 @@ impl AppModel {
                                     if matches!(self.device_state, DeviceState::Switching { .. }) {
                                         info!("Device switch failed, reverting to ready state");
                                     }
-                                    self.set_device_ready();
+                                    self.device_state = DeviceState::Ready;
                                     if let Some(error_msg) =
                                         event.data.get("error").and_then(|e| e.as_str())
                                     {
@@ -894,7 +861,7 @@ impl AppModel {
                                             self.current_model, model
                                         );
                                         self.current_model = model;
-                                        self.set_model_ready();
+                                        self.model_operation_state = ModelOperationState::Ready;
                                         info!(
                                             "Model state updated to Ready after model_switched event"
                                         );
@@ -1063,7 +1030,7 @@ impl AppModel {
 
             Message::DeviceLoaded(device) => {
                 self.current_device = device;
-                self.set_device_ready();
+                self.device_state = DeviceState::Ready;
                 Task::none()
             }
 
@@ -1078,13 +1045,13 @@ impl AppModel {
                     // No need to reload models - device switch complete and model state maintained via events
                     Task::none()
                 } else {
-                    self.set_device_ready();
+                    self.device_state = DeviceState::Ready;
                     Task::none()
                 }
             }
 
             Message::DeviceError(err) => {
-                self.set_device_ready();
+                self.device_state = DeviceState::Ready;
                 self.transcription_text = format!("Device Error: {err}");
                 Task::none()
             }
@@ -1140,7 +1107,7 @@ impl AppModel {
 
             Message::DownloadCancelled(model_name) => {
                 info!("Model {model_name} download was cancelled");
-                self.set_model_ready();
+                self.model_operation_state = ModelOperationState::Ready;
 
                 // Revert to previous model
                 let previous_model = self.previous_model;
@@ -1157,7 +1124,7 @@ impl AppModel {
 
             Message::DownloadError { model, error } => {
                 warn!("Download error for model {model}: {error}");
-                self.set_model_ready();
+                self.model_operation_state = ModelOperationState::Ready;
                 self.transcription_text = format!("Download Error: {error}");
 
                 // Revert to previous model
@@ -1199,7 +1166,7 @@ impl AppModel {
 
             Message::NoDownloadInProgress => {
                 // Clear state since there's no active download - set to ready
-                self.set_model_ready();
+                self.model_operation_state = ModelOperationState::Ready;
                 // Model state is already maintained via events, no reload needed
                 Task::none()
             }
@@ -1292,7 +1259,7 @@ impl AppModel {
                 self.current_model = current;
 
                 // Set model to ready state
-                self.set_model_ready();
+                self.model_operation_state = ModelOperationState::Ready;
 
                 // Download state is handled by the unified model operation state
 
@@ -1306,14 +1273,14 @@ impl AppModel {
 
             Message::CurrentModelLoaded(model) | Message::ModelChanged(model) => {
                 self.current_model = model;
-                self.set_model_ready();
+                self.model_operation_state = ModelOperationState::Ready;
                 Task::none()
             }
 
             Message::ModelError(err) => {
                 // Handle error from model switching - reset to Ready
                 warn!("Model operation failed: {err}");
-                self.set_model_ready();
+                self.model_operation_state = ModelOperationState::Ready;
 
                 // Display sanitized error message to user
                 let sanitized_error = err
@@ -1543,7 +1510,6 @@ where
             &event_buf,
         ) {
             Ok(event) => {
-                debug!("Received streamed event: {event:?}");
                 if channel
                     .send(Message::DaemonEventsReceived(vec![event]))
                     .await
