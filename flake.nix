@@ -398,10 +398,11 @@
                   # Security hardening
                   PrivateTmp = true;
                   ProtectSystem = "strict";
-                  ProtectHome = "read-only";
+                  ProtectHome = "tmpfs";  # More permissive than read-only, allows runtime dir access
                   NoNewPrivileges = true;
                   RuntimeDirectory = "stt";
                   StateDirectory = "stt";
+                  CacheDirectory = "stt";
                   LogsDirectory = "stt";
                 };
 
@@ -577,7 +578,18 @@
                   Type = "simple";
                   ExecStart = daemonCmd;
                   Restart = "on-failure";
+                  RestartSec = "5s";
                   SupplementaryGroups = [ "stt" ];
+
+                  # Security hardening
+                  PrivateTmp = true;
+                  ProtectSystem = "strict";
+                  ProtectHome = "tmpfs";
+                  NoNewPrivileges = true;
+                  RuntimeDirectory = "stt";
+                  StateDirectory = "stt";
+                  CacheDirectory = "stt";
+                  LogsDirectory = "stt";
                 };
               };
           };

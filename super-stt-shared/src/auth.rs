@@ -29,7 +29,7 @@ impl UdpAuth {
             .or_else(|_| std::env::var("TMPDIR"))
             .unwrap_or_else(|_| "/tmp".to_string());
 
-        let secret_dir = PathBuf::from(runtime_dir).join("super-stt");
+        let secret_dir = PathBuf::from(runtime_dir).join("stt");
 
         // Create directory if it doesn't exist
         if !secret_dir.exists() {
