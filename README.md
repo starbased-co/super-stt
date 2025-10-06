@@ -58,6 +58,18 @@ The installer automatically:
 - **Daemon**: Creates required directories for logs and sockets
 - **COSMIC Desktop**: Offers to configure Super+Space keyboard shortcut automatically
 
+### Nix/NixOS
+
+```bash
+# Try without installing
+nix run github:jorge-menjivar/super-stt
+
+# Install to profile
+nix profile install github:jorge-menjivar/super-stt
+```
+
+See **[docs/nix.md](docs/nix.md)** for Home Manager and NixOS configuration.
+
 ## Screenshots
 ### Multiple Visualization Styles
 ![Centered Bars Visualization](.github/assets/visualization-centered-bars.png)
@@ -276,6 +288,8 @@ just install-daemon
 # Run security audit
 just audit
 ```
+
+See **[docs/nix-implementation.md](docs/nix-implementation.md)** for Nix flake implementation details.
 
 ---
 
