@@ -310,38 +310,105 @@
               default = true;
               description = "Start daemon automatically";
             };
+
+            # Daemon configuration options
+            model = mkOption {
+              type = types.nullOr (types.enum [
+                "whisper-tiny"
+                "whisper-base"
+                "whisper-small"
+                "whisper-medium"
+                "whisper-large"
+                "whisper-large-v3"
+                "whisper-large-v3-turbo"
+              ]);
+              default = null;
+              description = "STT model to use (null = use saved config)";
+            };
+
+            device = mkOption {
+              type = types.enum [ "cuda" "cpu" ];
+              default = "cuda";
+              description = "Device to use: cuda (GPU with CPU fallback) or cpu (force CPU)";
+            };
+
+            socket = mkOption {
+              type = types.nullOr types.path;
+              default = null;
+              description = "Custom socket path (null = use default runtime dir)";
+            };
+
+            udpPort = mkOption {
+              type = types.port;
+              default = 8765;
+              description = "UDP port for audio streaming";
+            };
+
+            audioTheme = mkOption {
+              type = types.enum [
+                "classic"
+                "gentle"
+                "minimal"
+                "scifi"
+                "musical"
+                "nature"
+                "retro"
+                "silent"
+              ];
+              default = "classic";
+              description = "Audio feedback theme";
+            };
+
+            verbose = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Enable verbose logging";
+            };
           };
 
           config = mkIf cfg.enable {
             home.packages = [ selectedPackage ];
 
             # Systemd user service
-            systemd.user.services.super-stt = {
-              Unit = {
-                Description = "Super STT Daemon";
-                After = [ "graphical-session.target" ];
-              };
+            systemd.user.services.super-stt =
+              let
+                # Build command with flags
+                daemonCmd = lib.concatStringsSep " " (
+                  [ "${selectedPackage}/bin/super-stt" ]
+                  ++ lib.optional (cfg.model != null) "--model ${cfg.model}"
+                  ++ [ "--device ${cfg.device}" ]
+                  ++ lib.optional (cfg.socket != null) "--socket ${cfg.socket}"
+                  ++ [ "--udp-port ${toString cfg.udpPort}" ]
+                  ++ [ "--audio-theme ${cfg.audioTheme}" ]
+                  ++ lib.optional cfg.verbose "--verbose"
+                );
+              in
+              {
+                Unit = {
+                  Description = "Super STT Daemon";
+                  After = [ "graphical-session.target" ];
+                };
 
-              Service = {
-                Type = "simple";
-                ExecStart = "${selectedPackage}/bin/super-stt daemon";
-                Restart = "on-failure";
-                RestartSec = "5s";
+                Service = {
+                  Type = "simple";
+                  ExecStart = daemonCmd;
+                  Restart = "on-failure";
+                  RestartSec = "5s";
 
-                # Security hardening
-                PrivateTmp = true;
-                ProtectSystem = "strict";
-                ProtectHome = "read-only";
-                NoNewPrivileges = true;
-                RuntimeDirectory = "stt";
-                StateDirectory = "stt";
-                LogsDirectory = "stt";
-              };
+                  # Security hardening
+                  PrivateTmp = true;
+                  ProtectSystem = "strict";
+                  ProtectHome = "read-only";
+                  NoNewPrivileges = true;
+                  RuntimeDirectory = "stt";
+                  StateDirectory = "stt";
+                  LogsDirectory = "stt";
+                };
 
-              Install = mkIf cfg.autoStart {
-                WantedBy = [ "graphical-session.target" ];
+                Install = mkIf cfg.autoStart {
+                  WantedBy = [ "graphical-session.target" ];
+                };
               };
-            };
 
             # XDG configuration
             xdg = {
@@ -427,6 +494,60 @@
               default = self.packages.${pkgs.system}."super-stt-${cfg.variant}";
               description = "Super STT package to use";
             };
+
+            # Daemon configuration options
+            model = mkOption {
+              type = types.nullOr (types.enum [
+                "whisper-tiny"
+                "whisper-base"
+                "whisper-small"
+                "whisper-medium"
+                "whisper-large"
+                "whisper-large-v3"
+                "whisper-large-v3-turbo"
+              ]);
+              default = null;
+              description = "STT model to use (null = use saved config)";
+            };
+
+            device = mkOption {
+              type = types.enum [ "cuda" "cpu" ];
+              default = "cuda";
+              description = "Device to use: cuda (GPU with CPU fallback) or cpu (force CPU)";
+            };
+
+            socket = mkOption {
+              type = types.nullOr types.path;
+              default = null;
+              description = "Custom socket path (null = use default runtime dir)";
+            };
+
+            udpPort = mkOption {
+              type = types.port;
+              default = 8765;
+              description = "UDP port for audio streaming";
+            };
+
+            audioTheme = mkOption {
+              type = types.enum [
+                "classic"
+                "gentle"
+                "minimal"
+                "scifi"
+                "musical"
+                "nature"
+                "retro"
+                "silent"
+              ];
+              default = "classic";
+              description = "Audio feedback theme";
+            };
+
+            verbose = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Enable verbose logging";
+            };
           };
 
           config = mkIf cfg.enable {
@@ -436,16 +557,29 @@
             users.groups.stt = { };
 
             # System-wide socket activation
-            systemd.user.services.super-stt = {
-              description = "Super STT Daemon";
-              after = [ "graphical-session.target" ];
-              serviceConfig = {
-                Type = "simple";
-                ExecStart = "${cfg.package}/bin/super-stt daemon";
-                Restart = "on-failure";
-                SupplementaryGroups = [ "stt" ];
+            systemd.user.services.super-stt =
+              let
+                # Build command with flags
+                daemonCmd = lib.concatStringsSep " " (
+                  [ "${cfg.package}/bin/super-stt" ]
+                  ++ lib.optional (cfg.model != null) "--model ${cfg.model}"
+                  ++ [ "--device ${cfg.device}" ]
+                  ++ lib.optional (cfg.socket != null) "--socket ${cfg.socket}"
+                  ++ [ "--udp-port ${toString cfg.udpPort}" ]
+                  ++ [ "--audio-theme ${cfg.audioTheme}" ]
+                  ++ lib.optional cfg.verbose "--verbose"
+                );
+              in
+              {
+                description = "Super STT Daemon";
+                after = [ "graphical-session.target" ];
+                serviceConfig = {
+                  Type = "simple";
+                  ExecStart = daemonCmd;
+                  Restart = "on-failure";
+                  SupplementaryGroups = [ "stt" ];
+                };
               };
-            };
           };
         };
     };
