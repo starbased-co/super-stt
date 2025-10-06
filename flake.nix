@@ -420,12 +420,14 @@
                   # Security hardening
                   PrivateTmp = true;
                   ProtectSystem = "strict";
-                  ProtectHome = "tmpfs";  # More permissive than read-only, allows runtime dir access
                   NoNewPrivileges = true;
                   RuntimeDirectory = "stt";
                   StateDirectory = "stt";
                   CacheDirectory = "stt";
                   LogsDirectory = "stt";
+
+                  # Wayland environment for keyboard injection
+                  PassEnvironment = [ "WAYLAND_DISPLAY" "XDG_RUNTIME_DIR" ];
                 };
 
                 Install = mkIf cfg.autoStart {
@@ -479,8 +481,14 @@
                 };
               };
 
-              # Data directories
-              dataFile."stt/.keep".text = "";
+              # Data files
+              dataFile = {
+                "stt/.keep".text = "";
+              } // lib.optionalAttrs cfg.enableApp {
+                # Install icon for desktop app
+                "icons/hicolor/scalable/apps/super-stt-app.svg".source =
+                  "${selectedPackage}/share/icons/hicolor/scalable/apps/super-stt-app.svg";
+              };
             };
 
             # Update desktop database and icon cache
@@ -606,12 +614,14 @@
                   # Security hardening
                   PrivateTmp = true;
                   ProtectSystem = "strict";
-                  ProtectHome = "tmpfs";
                   NoNewPrivileges = true;
                   RuntimeDirectory = "stt";
                   StateDirectory = "stt";
                   CacheDirectory = "stt";
                   LogsDirectory = "stt";
+
+                  # Wayland environment for keyboard injection
+                  PassEnvironment = [ "WAYLAND_DISPLAY" "XDG_RUNTIME_DIR" ];
                 };
               };
           };
