@@ -40,28 +40,28 @@
         variantHashes = {
           # CPU variants (always available)
           cpu = {
-            x86_64-linux = pkgs.lib.fakeSha256;  # TODO: Update
-            aarch64-linux = pkgs.lib.fakeSha256; # TODO: Update
+            x86_64-linux = "sha256-CQCeLJR482C7nIypNhCnwa/c6UcmVlNNTkyf3rehrYo=";
+            aarch64-linux = "sha256-h7mb+50vg4Dazr4av1lvvWHIV9EkeWMfCP2wyBNN1XM=";
           };
           # CUDA variants (may not exist for all releases)
           cuda-cudnn-sm75 = {
-            x86_64-linux = pkgs.lib.fakeSha256;  # TODO: Update
+            x86_64-linux = "sha256-ExlviVI9pDf/y7kk55XEkUsUa+kL9lUzfoTclsdqa8o=";
             aarch64-linux = null;  # Not available for ARM
           };
           cuda-cudnn-sm80 = {
-            x86_64-linux = pkgs.lib.fakeSha256;  # TODO: Update
+            x86_64-linux = "sha256-2D28ssEcKrUhJO3Ef9Dty957+NetHXQhIjzTcadUHNo=";
             aarch64-linux = null;
           };
           cuda-cudnn-sm86 = {
-            x86_64-linux = pkgs.lib.fakeSha256;  # TODO: Update
+            x86_64-linux = "sha256-0VlV/Cb39yYyiDF2xP5pEqwbUbsMiFgnD4smylXg350=";
             aarch64-linux = null;
           };
           cuda-cudnn-sm89 = {
-            x86_64-linux = pkgs.lib.fakeSha256;  # TODO: Update
+            x86_64-linux = "sha256-VBrC7moHBUGS0JL/RHk4kTJkyLgL252OxJ9VuHZoa2M=";
             aarch64-linux = null;
           };
           cuda-cudnn-sm90 = {
-            x86_64-linux = pkgs.lib.fakeSha256;  # TODO: Update
+            x86_64-linux = "sha256-Ysk5irzf7+Pvurzqs1wuGSYwfIvVR9DWBJ/+n0JW/Hs=";
             aarch64-linux = null;
           };
         };
@@ -115,9 +115,21 @@
               pkgs.xorg.libXcursor
               pkgs.xorg.libXi
               pkgs.xorg.libXrandr
-            ] ++ pkgs.lib.optionals (pkgs.lib.hasPrefix "cuda" variant) [
-              pkgs.cudaPackages.cudatoolkit
-              pkgs.cudaPackages.cudnn
+            ];
+
+            # Note: CUDA runtime libraries not needed as buildInputs since we're
+            # downloading pre-built binaries. autoPatchelfHook will find CUDA libs
+            # in the user's system if present.
+
+            # Skip missing CUDA libraries during autopatchelf
+            autoPatchelfIgnoreMissingDeps = [
+              "libcuda.so.1"
+              "libcurand.so.10"
+              "libcublas.so.12"
+              "libcublasLt.so.12"
+              "libcudnn.so.9"
+              "libcudnn_ops.so.9"
+              "libcudnn_cnn.so.9"
             ];
 
             sourceRoot = ".";
@@ -333,16 +345,32 @@
 
             # XDG configuration
             xdg = {
-              # Configuration file
-              configFile."super-stt/config.toml".text = ''
-                # Super STT Configuration
-                [daemon]
-                socket_path = "$XDG_RUNTIME_DIR/stt/daemon.sock"
+              # Configuration files
+              configFile = {
+                # Super STT configuration
+                "super-stt/config.toml".text = ''
+                  # Super STT Configuration
+                  [daemon]
+                  socket_path = "$XDG_RUNTIME_DIR/stt/daemon.sock"
 
-                [logging]
-                level = "info"
-                directory = "$HOME/.local/share/stt/logs"
-              '';
+                  [logging]
+                  level = "info"
+                  directory = "$HOME/.local/share/stt/logs"
+                '';
+              } // lib.optionalAttrs cfg.enableApplet {
+                # COSMIC keyboard shortcut (only if applet enabled)
+                "cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom".text = ''
+                  {
+                      (
+                          modifiers: [
+                              Super,
+                          ],
+                          key: "space",
+                          description: Some("Super STT"),
+                      ): Spawn("${selectedPackage}/bin/stt record --write"),
+                  }
+                '';
+              };
 
               # Desktop entries (if app enabled)
               desktopEntries = mkIf cfg.enableApp {
@@ -359,22 +387,6 @@
                     Keywords = "speech;transcription;stt;dictation;";
                   };
                 };
-              };
-
-              # COSMIC applet desktop entries
-              configFile = mkIf cfg.enableApplet {
-                # COSMIC keyboard shortcut
-                "cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom".text = ''
-                  {
-                      (
-                          modifiers: [
-                              Super,
-                          ],
-                          key: "space",
-                          description: Some("Super STT"),
-                      ): Spawn("${selectedPackage}/bin/stt record --write"),
-                  }
-                '';
               };
 
               # Data directories
