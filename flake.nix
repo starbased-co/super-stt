@@ -111,6 +111,7 @@
               pkgs.libGL
               pkgs.libxkbcommon
               pkgs.wayland
+              pkgs.vulkan-loader
               pkgs.xorg.libX11
               pkgs.xorg.libXcursor
               pkgs.xorg.libXi
@@ -172,6 +173,27 @@
               # Create stt wrapper script
               makeWrapper $out/bin/super-stt $out/bin/stt \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.coreutils ]}
+
+              # Wrap GUI applications with Wayland libraries
+              if [ -f $out/bin/super-stt-app ]; then
+                wrapProgram $out/bin/super-stt-app \
+                  --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [
+                    pkgs.wayland
+                    pkgs.libxkbcommon
+                    pkgs.vulkan-loader
+                    pkgs.libGL
+                  ]}
+              fi
+
+              if [ -f $out/bin/super-stt-cosmic-applet ]; then
+                wrapProgram $out/bin/super-stt-cosmic-applet \
+                  --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [
+                    pkgs.wayland
+                    pkgs.libxkbcommon
+                    pkgs.vulkan-loader
+                    pkgs.libGL
+                  ]}
+              fi
 
               runHook postInstall
             '';
