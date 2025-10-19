@@ -1,0 +1,6 @@
+# Component directory placeholder
+# Future components:
+# - ConnectionStatus.tsx - Display connection state to daemon
+# - AudioVisualizer.tsx - Audio level and frequency spectrum display
+# - TranscriptionDisplay.tsx - Show real-time STT results
+# - StatusBar.tsx - Recording status and controls
