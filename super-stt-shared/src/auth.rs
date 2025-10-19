@@ -112,12 +112,16 @@ impl UdpAuth {
     /// This function will return an error if the secret file cannot be read.
     pub fn verify_auth_message(&self, message: &str) -> Result<Option<String>> {
         let secret = self.get_or_create_secret()?;
+        log::info!("🔍 DEBUG: Daemon secret: {}", secret);
 
         if let Some(rest) = message.strip_prefix("REGISTER:")
             && let Some((client_type, provided_secret)) = rest.split_once(':')
-            && provided_secret == secret
         {
-            return Ok(Some(client_type.to_string()));
+            log::info!("🔍 DEBUG: Client type: {}, Provided secret: {}", client_type, provided_secret);
+            log::info!("🔍 DEBUG: Secrets match: {}", provided_secret == secret);
+            if provided_secret == secret {
+                return Ok(Some(client_type.to_string()));
+            }
         }
 
         Ok(None)

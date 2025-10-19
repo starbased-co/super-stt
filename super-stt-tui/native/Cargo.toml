@@ -1,0 +1,23 @@
+[package]
+name = "super-stt-tui-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]
+
+[dependencies]
+napi = { version = "2", features = ["tokio_rt", "async"] }
+napi-derive = "2"
+super-stt-shared = { path = "../../super-stt-shared" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+log = "0.4"
+cpal = "0.15"
+serde_json = "1"
+libc = "0.2"
+
+[build-dependencies]
+napi-build = "2"

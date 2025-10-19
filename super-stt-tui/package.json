@@ -4,9 +4,17 @@
   "description": "Terminal UI client for Super STT speech-to-text daemon",
   "main": "dist/index.js",
   "type": "module",
+  "napi": {
+    "binaryName": "super-stt-tui-native",
+    "targets": [
+      "x86_64-unknown-linux-gnu"
+    ]
+  },
   "scripts": {
+    "build:native": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir .",
+    "build:native:debug": "napi build --platform --manifest-path native/Cargo.toml --output-dir .",
     "dev": "tsx src/index.tsx",
-    "build": "tsc",
+    "build": "pnpm build:native && tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
@@ -28,6 +36,7 @@
     "react": "^19.2.0"
   },
   "devDependencies": {
+    "@napi-rs/cli": "^3.3.1",
     "@types/node": "^24.8.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"

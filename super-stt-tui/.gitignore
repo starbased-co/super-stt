@@ -39,3 +39,11 @@ Thumbs.db
 coverage/
 *.lcov
 .nyc_output/
+# Native build artifacts
+*.node
+native/target/
+test-native.js
+test-e2e.js
+test-protocol.js
+test-quick.js
+test-integration.ts

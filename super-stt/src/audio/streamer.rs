@@ -356,6 +356,7 @@ impl UdpAudioStreamer {
                                 if len >= 8 && &buf[0..8] == b"REGISTER" {
                                     // Authenticated registration protocol: "REGISTER:client_type:secret"
                                     let msg = String::from_utf8_lossy(&buf[0..len]);
+                                    log::info!("🔍 DEBUG: Received registration: {}", msg);
 
                                     match auth.verify_auth_message(&msg) {
                                         Ok(Some(client_type)) => {
