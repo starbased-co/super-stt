@@ -20,7 +20,14 @@ impl UdpAuth {
     /// This function will return an error if the secret file cannot be created.
     pub fn new() -> Result<Self> {
         let secret_file = Self::get_secret_file_path()?;
-        Ok(Self { secret_file })
+        let auth = Self { secret_file };
+
+        // CRITICAL: Generate/load secret immediately to avoid race conditions
+        // This ensures the secret file exists before any clients try to read it
+        let _secret = auth.get_or_create_secret()?;
+        log::debug!("UDP authentication initialized with secret at {:?}", auth.secret_file);
+
+        Ok(auth)
     }
 
     /// Get the path to the secret file
@@ -112,15 +119,14 @@ impl UdpAuth {
     /// This function will return an error if the secret file cannot be read.
     pub fn verify_auth_message(&self, message: &str) -> Result<Option<String>> {
         let secret = self.get_or_create_secret()?;
-        log::info!("🔍 DEBUG: Daemon secret: {}", secret);
 
         if let Some(rest) = message.strip_prefix("REGISTER:")
             && let Some((client_type, provided_secret)) = rest.split_once(':')
         {
-            log::info!("🔍 DEBUG: Client type: {}, Provided secret: {}", client_type, provided_secret);
-            log::info!("🔍 DEBUG: Secrets match: {}", provided_secret == secret);
             if provided_secret == secret {
                 return Ok(Some(client_type.to_string()));
+            } else {
+                log::warn!("UDP authentication failed: secret mismatch");
             }
         }
 
