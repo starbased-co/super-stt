@@ -31,12 +31,19 @@ export const App: React.FC<AppProps> = () => {
     finalConfidence,
     error,
     clientId,
+    startRecording,
   } = useUdpClient();
 
   // Handle keyboard input
   useInput((input) => {
     if (input === 'q' || input === 'Q') {
       exit();
+    } else if (input === 'r' || input === 'R') {
+      if (isRegistered && !isRecording) {
+        startRecording().catch((err) => {
+          console.error('Failed to start recording:', err);
+        });
+      }
     }
   });
 
@@ -84,7 +91,7 @@ export const App: React.FC<AppProps> = () => {
       {/* Footer with instructions */}
       <Box marginTop={2} borderStyle="single" borderColor="gray" paddingX={1}>
         <Text dimColor>
-          Press <Text bold>q</Text> to quit
+          Press <Text bold>r</Text> to record | <Text bold>q</Text> to quit
         </Text>
       </Box>
     </Box>

@@ -30,7 +30,11 @@ export interface UdpClientState {
   finalConfidence: number;
   error: Error | null;
   clientId: string | null;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
 }
+
+const NOOP_ASYNC = async () => {};
 
 const INITIAL_STATE: UdpClientState = {
   isConnected: false,
@@ -45,6 +49,8 @@ const INITIAL_STATE: UdpClientState = {
   finalConfidence: 0,
   error: null,
   clientId: null,
+  startRecording: NOOP_ASYNC,
+  stopRecording: NOOP_ASYNC,
 };
 
 /**
@@ -171,5 +177,29 @@ export function useUdpClient(): UdpClientState {
     };
   }, []);
 
-  return state;
+  const startRecording = async () => {
+    if (!clientRef.current) {
+      throw new Error('Client not connected');
+    }
+    try {
+      const response = await clientRef.current.sendRecordCommand(undefined, true);
+      console.log('Recording started:', response);
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error : new Error(String(error)),
+      }));
+      throw error;
+    }
+  };
+
+  const stopRecording = async () => {
+    setState((prev) => ({ ...prev, isRecording: false }));
+  };
+
+  return {
+    ...state,
+    startRecording,
+    stopRecording,
+  };
 }

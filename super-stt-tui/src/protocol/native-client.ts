@@ -161,6 +161,13 @@ export class NativeUdpClient extends EventEmitter {
   getClientId(): string | null {
     return this.client ? this.client.getClientId() : null;
   }
+
+  async sendRecordCommand(socketPath?: string, writeMode = true): Promise<string> {
+    if (!this.client) {
+      throw new Error('Client not connected');
+    }
+    return await this.client.sendRecordCommand(socketPath, writeMode);
+  }
 }
 
 /**
