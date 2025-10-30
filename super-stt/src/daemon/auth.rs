@@ -27,6 +27,14 @@ impl ProcessAuth {
             PathBuf::from(format!("{home}/.local/bin/stt")),
             PathBuf::from("/usr/local/bin/stt"),
             PathBuf::from("/usr/bin/stt"),
+            // TUI client
+            PathBuf::from(format!("{home}/.local/bin/super-stt-tui")),
+            PathBuf::from("/usr/local/bin/super-stt-tui"),
+            PathBuf::from("/usr/bin/super-stt-tui"),
+            // Node.js runtime (for TUI in development/production)
+            PathBuf::from("/usr/bin/node"),
+            PathBuf::from(format!("{home}/.local/bin/node")),
+            PathBuf::from(format!("{home}/.nvm/versions/node")),
             // Add development paths
             PathBuf::from("target/debug/super-stt"),
             PathBuf::from("target/release/super-stt"),
@@ -101,11 +109,15 @@ impl ProcessAuth {
         let comm_path = PathBuf::from(format!("/proc/{peer_pid}/comm"));
         if let Ok(comm) = fs::read_to_string(&comm_path) {
             let process_name = comm.trim();
-            if process_name == "super-stt" || process_name == "stt" {
+            if process_name == "super-stt"
+                || process_name == "stt"
+                || process_name == "super-stt-tui"
+                || process_name == "node"
+            {
                 return Ok(true);
             }
             log::info!(
-                "Process name '{process_name}' does not match expected names (super-stt, stt)"
+                "Process name '{process_name}' does not match expected names (super-stt, stt, super-stt-tui, node)"
             );
         }
 
@@ -234,6 +246,7 @@ mod tests {
         // Verify that both super-stt and stt paths are included
         let expected_super_stt = format!("{home}/.local/bin/super-stt");
         let expected_stt_wrapper = format!("{home}/.local/bin/stt");
+        let expected_stt_tui = format!("{home}/.local/bin/super-stt-tui");
 
         let paths: Vec<String> = auth
             .expected_stt_paths
@@ -249,12 +262,19 @@ mod tests {
             paths.contains(&expected_stt_wrapper),
             "Expected paths should include stt wrapper: {expected_stt_wrapper}"
         );
+        assert!(
+            paths.contains(&expected_stt_tui),
+            "Expected paths should include TUI client: {expected_stt_tui}"
+        );
 
-        // Verify system paths for both
+        // Verify system paths for all authorized binaries
         assert!(paths.contains(&"/usr/local/bin/super-stt".to_string()));
         assert!(paths.contains(&"/usr/local/bin/stt".to_string()));
+        assert!(paths.contains(&"/usr/local/bin/super-stt-tui".to_string()));
         assert!(paths.contains(&"/usr/bin/super-stt".to_string()));
         assert!(paths.contains(&"/usr/bin/stt".to_string()));
+        assert!(paths.contains(&"/usr/bin/super-stt-tui".to_string()));
+        assert!(paths.contains(&"/usr/bin/node".to_string()));
     }
 
     #[test]

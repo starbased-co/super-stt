@@ -217,6 +217,10 @@ impl SuperSTTDaemon {
                     if let Ok(mut actually_typed_guard) = actually_typed.lock() {
                         typer.update_preview(&text, &mut actually_typed_guard);
                     }
+
+                    if let Err(e) = self.udp_streamer.broadcast_partial_stt(text.clone(), 1.0, 0).await {
+                        warn!("Failed to broadcast partial STT: {}", e);
+                    }
                 }
             } else if !preview_enabled {
                 debug!("Preview typing is disabled, skipping audio processing and transcription");
@@ -265,10 +269,15 @@ impl SuperSTTDaemon {
             .await?;
         info!("Step 3-5 complete: Final GPU transcription finished");
 
-        // STEP 6: Type final transcript
+        // STEP 6: Type final transcript and broadcast to UDP clients
         if write_mode {
             typer.process_final_text(&transcription_result);
         }
+
+        if let Err(e) = self.udp_streamer.broadcast_final_stt(transcription_result.clone(), 1.0, 0).await {
+            warn!("Failed to broadcast final STT: {}", e);
+        }
+
         info!("Step 6 complete: Final transcription typed successfully");
 
         // Finalize recording session

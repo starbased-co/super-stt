@@ -102,14 +102,27 @@ export function useUdpClient(): UdpClientState {
 
       // Recording state
       client.on('recording_state', (recordingState: RecordingState) => {
-        if (!mounted) return;
-        setState((prev) => ({
-          ...prev,
+        console.log('[useUdpClient] Received recording_state event:', {
+          mounted,
           isRecording: recordingState.isRecording,
-          // Clear partial text when recording stops
-          partialText: recordingState.isRecording ? prev.partialText : '',
-          partialConfidence: recordingState.isRecording ? prev.partialConfidence : 0,
-        }));
+        });
+        if (!mounted) return;
+        setState((prev) => {
+          const newState = {
+            ...prev,
+            isRecording: recordingState.isRecording,
+            // Clear partial text when recording stops
+            partialText: recordingState.isRecording ? prev.partialText : '',
+            partialConfidence: recordingState.isRecording ? prev.partialConfidence : 0,
+          };
+          console.log('[useUdpClient] Setting recording state:', {
+            isRecording: newState.isRecording,
+            partialTextCleared: !recordingState.isRecording,
+            finalTextPreserved: newState.finalText === prev.finalText,
+            finalText: newState.finalText,
+          });
+          return newState;
+        });
       });
 
       // Frequency bands (primary visualization data)
@@ -132,24 +145,50 @@ export function useUdpClient(): UdpClientState {
 
       // Partial transcription
       client.on('partial_stt', (result: STTResult) => {
+        console.log('[useUdpClient] Received partial_stt event:', {
+          mounted,
+          text: result.text,
+          textLength: result.text.length,
+          confidence: result.confidence,
+        });
         if (!mounted) return;
-        setState((prev) => ({
-          ...prev,
-          partialText: result.text,
-          partialConfidence: result.confidence,
-        }));
+        setState((prev) => {
+          const newState = {
+            ...prev,
+            partialText: result.text,
+            partialConfidence: result.confidence,
+          };
+          console.log('[useUdpClient] Setting partial state:', {
+            partialText: newState.partialText,
+            partialTextLength: newState.partialText.length,
+          });
+          return newState;
+        });
       });
 
       // Final transcription
       client.on('final_stt', (result: STTResult) => {
+        console.log('[useUdpClient] Received final_stt event:', {
+          mounted,
+          text: result.text,
+          textLength: result.text.length,
+          confidence: result.confidence,
+        });
         if (!mounted) return;
-        setState((prev) => ({
-          ...prev,
-          finalText: result.text,
-          finalConfidence: result.confidence,
-          partialText: '',
-          partialConfidence: 0,
-        }));
+        setState((prev) => {
+          const newState = {
+            ...prev,
+            finalText: result.text,
+            finalConfidence: result.confidence,
+            partialText: '',
+            partialConfidence: 0,
+          };
+          console.log('[useUdpClient] Setting final state:', {
+            finalText: newState.finalText,
+            finalTextLength: newState.finalText.length,
+          });
+          return newState;
+        });
       });
 
         // Now connect after all listeners are attached

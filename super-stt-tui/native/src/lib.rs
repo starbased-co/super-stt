@@ -19,8 +19,11 @@ pub struct UdpClient {
 impl UdpClient {
   #[napi(constructor)]
   pub fn new() -> napi::Result<Self> {
+    eprintln!("[DEBUG] Creating UdpAuth...");
     let auth = UdpAuth::new()
       .map_err(|e| napi::Error::from_reason(format!("Failed to create UDP auth: {}", e)))?;
+
+    eprintln!("[DEBUG] UdpAuth created successfully");
 
     Ok(Self {
       socket: Arc::new(Mutex::new(None)),
@@ -35,11 +38,13 @@ impl UdpClient {
       .await
       .map_err(|e| napi::Error::from_reason(format!("Failed to bind socket: {}", e)))?;
 
+    eprintln!("[DEBUG] Creating auth message for client_type: {}", client_type);
     let registration_msg = self.auth
       .create_auth_message(&client_type)
       .map_err(|e| napi::Error::from_reason(format!("Failed to create auth message: {}", e)))?;
 
-    eprintln!("[DEBUG] Sending registration message: {}", registration_msg);
+    eprintln!("[DEBUG] Registration message: {}", registration_msg);
+    eprintln!("[DEBUG] Sending registration to 127.0.0.1:8765");
     socket
       .send_to(registration_msg.as_bytes(), "127.0.0.1:8765")
       .await

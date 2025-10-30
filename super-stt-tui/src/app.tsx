@@ -1,5 +1,5 @@
-import React from 'react';
-import { Box, Text, useInput, useApp } from 'ink';
+import React, { useEffect } from 'react';
+import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { useUdpClient } from './hooks/useUdpClient.js';
 import { Header } from './components/Header.js';
 import { ConnectionStatus } from './components/ConnectionStatus.js';
@@ -17,6 +17,7 @@ interface AppProps {
  */
 export const App: React.FC<AppProps> = () => {
   const { exit } = useApp();
+  const { setRawMode, isRawModeSupported } = useStdin();
 
   const {
     isConnected,
@@ -33,6 +34,18 @@ export const App: React.FC<AppProps> = () => {
     clientId,
     startRecording,
   } = useUdpClient();
+
+  // Enable raw mode for keyboard input
+  useEffect(() => {
+    if (!isRawModeSupported) {
+      return;
+    }
+
+    setRawMode(true);
+    return () => {
+      setRawMode(false);
+    };
+  }, [isRawModeSupported, setRawMode]);
 
   // Handle keyboard input
   useInput((input) => {

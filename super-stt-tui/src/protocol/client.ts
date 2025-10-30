@@ -9,19 +9,19 @@
  * - Event emission for parsed data
  */
 
-import dgram from 'node:dgram';
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { EventEmitter } from 'node:events';
-import { parsePacket } from './parsers.js';
+import dgram from "node:dgram";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { EventEmitter } from "node:events";
+import { parsePacket } from "./parsers.js";
 import type {
   RecordingState,
   FrequencyBands,
   AudioSamples,
   STTResult,
-} from './types.js';
+} from "./types.js";
 
-const DAEMON_HOST = '127.0.0.1';
+const DAEMON_HOST = "127.0.0.1";
 const DAEMON_PORT = 8765;
 const KEEP_ALIVE_INTERVAL = 60_000; // 60 seconds
 const REGISTRATION_TIMEOUT = 5_000; // 5 seconds
@@ -43,7 +43,10 @@ export declare interface UdpClient {
     event: K,
     listener: (...args: UdpClientEvents[K]) => void,
   ): this;
-  emit<K extends keyof UdpClientEvents>(event: K, ...args: UdpClientEvents[K]): boolean;
+  emit<K extends keyof UdpClientEvents>(
+    event: K,
+    ...args: UdpClientEvents[K]
+  ): boolean;
 }
 
 export class UdpClient extends EventEmitter {
@@ -57,14 +60,16 @@ export class UdpClient extends EventEmitter {
    * Follows the same lazy initialization pattern as the Rust daemon
    */
   private getOrCreateSecret(): string {
-    const runtimeDir = process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || '/tmp';
-    const secretDir = join(runtimeDir, 'stt');
-    const secretPath = join(secretDir, 'udp_secret');
+    const runtimeDir =
+      process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || "/tmp";
+    const secretDir = join(runtimeDir, "stt");
+    const secretPath = join(secretDir, "udp_secret");
+    console.log(secretPath);
 
     // If secret file exists, load it
     if (existsSync(secretPath)) {
       try {
-        return readFileSync(secretPath, 'utf-8').trim();
+        return readFileSync(secretPath, "utf-8").trim();
       } catch (error) {
         throw new Error(
           `Failed to read secret file: ${error instanceof Error ? error.message : String(error)}`,
@@ -96,57 +101,72 @@ export class UdpClient extends EventEmitter {
   /**
    * Connect to daemon and register
    */
-  connect(clientType = 'tui'): void {
+  connect(clientType = "tui"): void {
     if (this.socket) {
-      console.warn('Already connected');
+      console.warn("Already connected");
       return;
     }
 
     try {
       const secret = this.getOrCreateSecret();
-      console.log('📡 Connecting to daemon...');
+      console.log("📡 Connecting to daemon...");
       console.log(`   Secret: ${secret.substring(0, 15)}...`);
+      console.log("secret", secret);
 
-      this.socket = dgram.createSocket('udp4');
+      this.socket = dgram.createSocket("udp4");
 
-      this.socket.on('message', this.handleMessage.bind(this));
-      this.socket.on('error', this.handleError.bind(this));
-      this.socket.on('close', this.handleClose.bind(this));
+      this.socket.on("message", this.handleMessage.bind(this));
+      this.socket.on("error", this.handleError.bind(this));
+      this.socket.on("close", this.handleClose.bind(this));
 
       // Send registration message
       const registrationMsg = `REGISTER:${clientType}:${secret}`;
-      console.log(`   Sending: REGISTER:${clientType}:${secret.substring(0, 15)}...`);
+      console.log(
+        `   Sending: REGISTER:${clientType}:${secret.substring(0, 15)}...`,
+      );
 
-      const msgBuffer = Buffer.from(registrationMsg, 'utf-8');
-      console.log(`   Buffer length: ${msgBuffer.length}, content: ${msgBuffer.toString()}`);
+      const msgBuffer = Buffer.from(registrationMsg, "utf-8");
+      console.log(
+        `   Buffer length: ${msgBuffer.length}, content: ${msgBuffer.toString()}`,
+      );
 
-      this.socket.send(msgBuffer, 0, msgBuffer.length, DAEMON_PORT, DAEMON_HOST, (err) => {
-        if (err) {
-          console.error('❌ Registration send failed:', err.message);
-          this.emit('error', new Error(`Registration failed: ${err.message}`));
-          this.disconnect();
-          return;
-        }
-        console.log('✅ Registration message sent to daemon');
-      });
+      this.socket.send(
+        msgBuffer,
+        0,
+        msgBuffer.length,
+        DAEMON_PORT,
+        DAEMON_HOST,
+        (err) => {
+          if (err) {
+            console.error("❌ Registration send failed:", err.message);
+            this.emit(
+              "error",
+              new Error(`Registration failed: ${err.message}`),
+            );
+            this.disconnect();
+            return;
+          }
+          console.log("✅ Registration message sent to daemon");
+        },
+      );
 
       // Set registration timeout
       this.registrationTimeout = setTimeout(() => {
         if (!this.isRegistered) {
-          console.warn('⚠️  Registration timeout - no response from daemon');
+          console.warn("⚠️  Registration timeout - no response from daemon");
           this.emit(
-            'error',
-            new Error('Registration timeout - daemon not responding'),
+            "error",
+            new Error("Registration timeout - daemon not responding"),
           );
           this.disconnect();
         }
       }, REGISTRATION_TIMEOUT);
 
-      this.emit('connected');
+      this.emit("connected");
     } catch (error) {
-      console.error('❌ Connection error:', error);
+      console.error("❌ Connection error:", error);
       this.emit(
-        'error',
+        "error",
         error instanceof Error ? error : new Error(String(error)),
       );
     }
@@ -172,7 +192,7 @@ export class UdpClient extends EventEmitter {
     }
 
     this.isRegistered = false;
-    this.emit('disconnected');
+    this.emit("disconnected");
   }
 
   /**
@@ -181,13 +201,20 @@ export class UdpClient extends EventEmitter {
   private sendPing(): void {
     if (!this.socket || !this.isRegistered) return;
 
-    const pingBuffer = Buffer.from('PING', 'utf-8');
-    this.socket.send(pingBuffer, 0, pingBuffer.length, DAEMON_PORT, DAEMON_HOST, (err) => {
-      if (err) {
-        console.error('Keep-alive ping failed:', err);
-        this.emit('error', new Error(`Keep-alive failed: ${err.message}`));
-      }
-    });
+    const pingBuffer = Buffer.from("PING", "utf-8");
+    this.socket.send(
+      pingBuffer,
+      0,
+      pingBuffer.length,
+      DAEMON_PORT,
+      DAEMON_HOST,
+      (err) => {
+        if (err) {
+          console.error("Keep-alive ping failed:", err);
+          this.emit("error", new Error(`Keep-alive failed: ${err.message}`));
+        }
+      },
+    );
   }
 
   /**
@@ -197,8 +224,8 @@ export class UdpClient extends EventEmitter {
     const data = msg.toString();
 
     // Handle registration acknowledgment
-    if (data.startsWith('REGISTERED:')) {
-      const clientId = data.split(':')[1];
+    if (data.startsWith("REGISTERED:")) {
+      const clientId = data.split(":")[1];
       this.isRegistered = true;
       console.log(`✅ Registered with daemon: ${clientId}`);
 
@@ -212,12 +239,12 @@ export class UdpClient extends EventEmitter {
         this.sendPing();
       }, KEEP_ALIVE_INTERVAL);
 
-      this.emit('registered', clientId);
+      this.emit("registered", clientId);
       return;
     }
 
     // Handle PONG responses (ignore)
-    if (data === 'PONG') {
+    if (data === "PONG") {
       return;
     }
 
@@ -226,28 +253,28 @@ export class UdpClient extends EventEmitter {
     if (!parsed) return;
 
     switch (parsed.type) {
-      case 'recording_state':
-        console.log('📝 Recording state');
-        this.emit('recording_state', parsed.data);
+      case "recording_state":
+        console.log("📝 Recording state");
+        this.emit("recording_state", parsed.data);
         break;
-      case 'frequency_bands':
-        console.log('📊 Frequency bands');
-        this.emit('frequency_bands', parsed.data);
+      case "frequency_bands":
+        console.log("📊 Frequency bands");
+        this.emit("frequency_bands", parsed.data);
         break;
-      case 'audio_samples':
-        console.log('🎵 Audio samples');
-        this.emit('audio_samples', parsed.data);
+      case "audio_samples":
+        console.log("🎵 Audio samples");
+        this.emit("audio_samples", parsed.data);
         break;
-      case 'partial_stt':
-        console.log('💬 Partial STT');
-        this.emit('partial_stt', parsed.data);
+      case "partial_stt":
+        console.log("💬 Partial STT");
+        this.emit("partial_stt", parsed.data);
         break;
-      case 'final_stt':
-        console.log('✨ Final STT');
-        this.emit('final_stt', parsed.data);
+      case "final_stt":
+        console.log("✨ Final STT");
+        this.emit("final_stt", parsed.data);
         break;
-      case 'unknown':
-        console.warn('⚠️  Unknown packet');
+      case "unknown":
+        console.warn("⚠️  Unknown packet");
         break;
     }
   }
@@ -256,8 +283,8 @@ export class UdpClient extends EventEmitter {
    * Handle socket errors
    */
   private handleError(error: Error): void {
-    console.error('UDP socket error:', error);
-    this.emit('error', error);
+    console.error("UDP socket error:", error);
+    this.emit("error", error);
   }
 
   /**
@@ -278,7 +305,7 @@ export class UdpClient extends EventEmitter {
 /**
  * Create and connect a new UDP client
  */
-export function createUdpClient(clientType = 'tui'): UdpClient {
+export function createUdpClient(clientType = "tui"): UdpClient {
   const client = new UdpClient();
   client.connect(clientType);
   return client;

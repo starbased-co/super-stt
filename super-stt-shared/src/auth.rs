@@ -20,11 +20,13 @@ impl UdpAuth {
     /// This function will return an error if the secret file cannot be created.
     pub fn new() -> Result<Self> {
         let secret_file = Self::get_secret_file_path()?;
+        eprintln!("[DEBUG UdpAuth] Secret file path: {:?}", secret_file);
         let auth = Self { secret_file };
 
         // CRITICAL: Generate/load secret immediately to avoid race conditions
         // This ensures the secret file exists before any clients try to read it
         let _secret = auth.get_or_create_secret()?;
+        eprintln!("[DEBUG UdpAuth] Secret loaded/created: {}", _secret);
         log::debug!("UDP authentication initialized with secret at {:?}", auth.secret_file);
 
         Ok(auth)
@@ -70,8 +72,11 @@ impl UdpAuth {
     }
 
     fn load_secret(&self) -> Result<String> {
+        eprintln!("[DEBUG UdpAuth] Loading secret from: {:?}", self.secret_file);
         let secret = fs::read_to_string(&self.secret_file).context("Failed to read secret file")?;
-        Ok(secret.trim().to_string())
+        let trimmed = secret.trim().to_string();
+        eprintln!("[DEBUG UdpAuth] Loaded secret: {}", trimmed);
+        Ok(trimmed)
     }
 
     /// Generate a new random secret and save it
@@ -88,6 +93,9 @@ impl UdpAuth {
             .as_nanos();
         let pid = std::process::id();
         let secret = format!("stt_{timestamp}_{pid}");
+
+        eprintln!("[DEBUG UdpAuth] Generating new secret: {}", secret);
+        eprintln!("[DEBUG UdpAuth] Writing to: {:?}", self.secret_file);
 
         // Write to file with restrictive permissions
         fs::write(&self.secret_file, &secret).context("Failed to write secret file")?;

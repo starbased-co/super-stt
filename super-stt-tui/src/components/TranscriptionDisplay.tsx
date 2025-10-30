@@ -25,6 +25,17 @@ export const TranscriptionDisplay: React.FC<TranscriptionDisplayProps> = ({
   const hasPartial = partialText.length > 0;
   const hasFinal = finalText.length > 0;
 
+  console.log('[TranscriptionDisplay] Render:', {
+    partialText,
+    partialTextLength: partialText.length,
+    hasPartial,
+    finalText,
+    finalTextLength: finalText.length,
+    hasFinal,
+    partialConfidence,
+    finalConfidence,
+  });
+
   return (
     <Box flexDirection="column">
       <Text bold>Transcription</Text>

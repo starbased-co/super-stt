@@ -391,7 +391,7 @@ impl SuperSTTDaemon {
             } else {
                 log::info!("Socket permissions set to 0o660 (owner + stt group access only)");
                 log::info!("Ensure users are in the 'stt' group: sudo usermod -a -G stt $USER");
-                log::info!("Authorized binaries: super-stt, stt wrapper");
+                log::info!("Authorized binaries: super-stt, stt wrapper, super-stt-tui (node)");
                 0o660
             };
 

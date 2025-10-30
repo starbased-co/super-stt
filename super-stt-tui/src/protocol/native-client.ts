@@ -117,9 +117,19 @@ export class NativeUdpClient extends EventEmitter {
             this.emit('audio_samples', parsed.data);
             break;
           case 'partial_stt':
+            console.log('[NativeUdpClient] Emitting partial_stt:', {
+              text: parsed.data.text,
+              textLength: parsed.data.text.length,
+              confidence: parsed.data.confidence,
+            });
             this.emit('partial_stt', parsed.data);
             break;
           case 'final_stt':
+            console.log('[NativeUdpClient] Emitting final_stt:', {
+              text: parsed.data.text,
+              textLength: parsed.data.text.length,
+              confidence: parsed.data.confidence,
+            });
             this.emit('final_stt', parsed.data);
             break;
         }

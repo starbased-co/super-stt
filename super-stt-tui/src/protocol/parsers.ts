@@ -183,6 +183,13 @@ export function parsePartialSTT(buffer: Buffer): STTResult | null {
   const confidence = data.readFloatLE(0);
   const text = data.slice(4).toString('utf-8');
 
+  console.log('[parsePartialSTT] Parsed:', {
+    text,
+    textLength: text.length,
+    confidence,
+    bufferLength: buffer.length,
+  });
+
   return { confidence, text };
 }
 
@@ -206,6 +213,13 @@ export function parseFinalSTT(buffer: Buffer): STTResult | null {
 
   const confidence = data.readFloatLE(0);
   const text = data.slice(4).toString('utf-8');
+
+  console.log('[parseFinalSTT] Parsed:', {
+    text,
+    textLength: text.length,
+    confidence,
+    bufferLength: buffer.length,
+  });
 
   return { confidence, text };
 }
